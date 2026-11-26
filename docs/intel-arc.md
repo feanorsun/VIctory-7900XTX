@@ -57,6 +57,8 @@ been measured on Intel yet.
   - Still large and not touched here: upload memory (about 4 GB in the notes)
     and the title's own memory (40 to 46 GB in total). Run with
     `VICTORY_MEMORY_MAP=1` to see the breakdown on the device.
+  - The rest of the shared-memory path (one copy instead of two) is staged and
+    gated in [shared-memory-plan.md](shared-memory-plan.md). Only stage 1 is done.
 
 ## What it does not do, and why
 
