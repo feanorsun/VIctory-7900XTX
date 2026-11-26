@@ -28,6 +28,12 @@ been measured on Intel yet.
   Float results do not change. It is not measured yet.
 - `indirect::amd()` now compares against the shared `VENDOR_AMD` constant. Same
   behaviour.
+- **Release profile** uses `lto = "thin"` and `codegen-units = 1`. Expected to
+  be faster at run time, at the cost of longer release and diagnostics builds.
+  Not measured.
+- **In-place memory cap** (`VICTORY_INPLACE_MB`) defaults to 4 GiB, or an eighth
+  of installed RAM where that is less. A 16 GB laptop now locks at most 2 GiB;
+  machines with 32 GB or more are unchanged. Set the variable to override.
 
 ## What it does not do, and why
 

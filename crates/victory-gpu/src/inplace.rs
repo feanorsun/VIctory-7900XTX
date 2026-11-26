@@ -89,12 +89,39 @@ pub(crate) fn level() -> u8 {
     *LEVEL.get_or_init(|| std::env::var("VICTORY_INPLACE").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0))
 }
 
-/// The most title memory in place at once, in bytes
-/// (`VICTORY_INPLACE_MB`, 4096): opening locks the pages into the PC's
+/// The most title memory in place at once, in bytes (`VICTORY_INPLACE_MB`;
+/// by default [`default_most`]): opening locks the pages into the PC's
 /// memory, also those the title never touched.
 fn most() -> u64 {
     static MOST: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *MOST.get_or_init(|| std::env::var("VICTORY_INPLACE_MB").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(4096) << 20)
+    *MOST.get_or_init(|| {
+        match std::env::var("VICTORY_INPLACE_MB").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
+            Some(mb) => mb << 20,
+            None => default_most(crate::host::total_physical_ram()),
+        }
+    })
+}
+
+/// The default cap: 4 GiB, or an eighth of the installed RAM where that is
+/// less, so a 16 GB laptop locks 2 GiB rather than a quarter of its memory.
+/// Machines with 32 GB or more keep the 4 GiB they always had.
+fn default_most(total_ram: Option<u64>) -> u64 {
+    const CAP: u64 = 4096 << 20;
+    total_ram.map_or(CAP, |total| CAP.min(total / 8))
+}
+
+#[cfg(test)]
+mod most_tests {
+    use super::default_most;
+
+    #[test]
+    fn the_default_cap_scales_down_only_on_small_machines() {
+        assert_eq!(default_most(Some(64 << 30)), 4096 << 20);
+        assert_eq!(default_most(Some(32 << 30)), 4096 << 20);
+        assert_eq!(default_most(Some(16 << 30)), 2048 << 20);
+        assert_eq!(default_most(Some(8 << 30)), 1024 << 20);
+        assert_eq!(default_most(None), 4096 << 20);
+    }
 }
 
 /// In place now: windows and their bytes, title buffers and their bytes;
