@@ -34,6 +34,17 @@ been measured on Intel yet.
 - **In-place memory cap** (`VICTORY_INPLACE_MB`) defaults to 4 GiB, or an eighth
   of installed RAM where that is less. A 16 GB laptop now locks at most 2 GiB;
   machines with 32 GB or more are unchanged. Set the variable to override.
+- **Shared memory, integrated graphics only** (the adapter reports UMA):
+  - `VICTORY_INPLACE` defaults to 1. Windows of the title's private memory are
+    placed for the GPU instead of copied, so the bytes are kept once instead of
+    twice. A window the driver refuses still falls back to a copy. Upstream
+    confirmed the approach with a probe only; it has not been run as a whole
+    game on any machine. **This is the change most likely to show up as a
+    visual or crash problem.** Revert with `VICTORY_INPLACE=0`.
+  - `VICTORY_TEXTURE_ROOM_PERCENT` defaults to 70 instead of 90. Texture copies
+    may fill 70 % of the card's budget, which here is the PC's memory, so about
+    a fifth of 32 GB is left for the title and the system. Costs more uploads
+    when textures are swapped. Set it to 90 to revert.
 
 ## What it does not do, and why
 

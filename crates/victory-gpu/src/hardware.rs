@@ -8,6 +8,15 @@ use windows::Win32::Graphics::Direct3D12::{
     D3D12_FEATURE_ARCHITECTURE1, D3D12_FEATURE_DATA_ARCHITECTURE1, ID3D12Device,
 };
 
+static INTEGRATED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Whether the host adapter shares the system's memory with the processor
+/// (integrated graphics). Set by [`log`], which runs as the device is made;
+/// false until then.
+pub(crate) fn integrated() -> bool {
+    INTEGRATED.get().copied().unwrap_or(false)
+}
+
 /// PCI vendor ids.
 pub(crate) const VENDOR_AMD: u32 = 0x1002;
 pub(crate) const VENDOR_INTEL: u32 = 0x8086;
@@ -72,7 +81,9 @@ pub(crate) fn identity(device: &ID3D12Device) -> Option<Identity> {
 /// Logs [`identity`] once for the run.
 pub(crate) fn log(device: &ID3D12Device) {
     match identity(device) {
-        Some(id) => tracing::info!(
+        Some(id) => {
+            let _ = INTEGRATED.set(id.uma);
+            tracing::info!(
             name = %id.name,
             vendor = format_args!("{:#06x}", id.vendor),
             device_id = format_args!("{:#06x}", id.device),
@@ -80,7 +91,8 @@ pub(crate) fn log(device: &ID3D12Device) {
             tile_based = id.tile_based,
             intel = id.is_intel(),
             "host adapter"
-        ),
+            );
+        }
         None => tracing::warn!("host adapter not identified (DXGI or the driver did not say)"),
     }
 }

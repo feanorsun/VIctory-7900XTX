@@ -86,7 +86,30 @@ pub(crate) fn probe_level() -> u8 {
 /// call before such a call once it takes them over.
 pub(crate) fn level() -> u8 {
     static LEVEL: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    *LEVEL.get_or_init(|| std::env::var("VICTORY_INPLACE").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0))
+    *LEVEL.get_or_init(|| {
+        std::env::var("VICTORY_INPLACE")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or_else(|| default_level(crate::hardware::integrated()))
+    })
+}
+
+/// The default level: 1 on integrated graphics, where the card's memory is
+/// the PC's own and a window placed over the title's memory is one copy
+/// fewer; 0 on a card with its own memory, as before.
+fn default_level(integrated: bool) -> u8 {
+    u8::from(integrated)
+}
+
+#[cfg(test)]
+mod level_tests {
+    use super::default_level;
+
+    #[test]
+    fn integrated_graphics_place_windows_in_place_by_default() {
+        assert_eq!(default_level(true), 1);
+        assert_eq!(default_level(false), 0);
+    }
 }
 
 /// The most title memory in place at once, in bytes (`VICTORY_INPLACE_MB`;

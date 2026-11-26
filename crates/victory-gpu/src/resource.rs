@@ -1768,8 +1768,17 @@ fn room_percent() -> u64 {
         std::env::var("VICTORY_TEXTURE_ROOM_PERCENT")
             .ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
-            .map_or(90, |percent| percent.clamp(50, 97))
+            .map_or(default_percent(crate::hardware::integrated()), |percent| percent.clamp(50, 97))
     })
+}
+
+/// The share of the card's budget texture copies may fill: 90 %, or 70 %
+/// on integrated graphics, where that budget is the PC's own memory and
+/// the rest is what the title and the system need. Sets
+/// `VICTORY_TEXTURE_ROOM_PERCENT` to override.
+#[cfg(windows)]
+fn default_percent(integrated: bool) -> u64 {
+    if integrated { 70 } else { 90 }
 }
 
 /// For the card accounting line ([`card_accounting`]): the title texture
