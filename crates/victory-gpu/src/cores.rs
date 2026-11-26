@@ -148,6 +148,32 @@ fn fast_of(sets: &[(u32, u8, u8)]) -> Vec<u32> {
     fast_sets(sets, true)
 }
 
+/// Fewer fast sets than this do not hold the threads that share a frame's
+/// work (as [`fast_by_cache`] asks of a cache's sets).
+const FEW: usize = 8;
+
+/// The sets for the threads that share a frame's work and those beside them
+/// ([`keep_helper_on_fast_cores`], [`keep_many_on_fast_cores`]): the fast
+/// ones. Where those are the fastest class and fewer than [`FEW`], the next
+/// class too, and no selection at all (empty) if that is every set.
+///
+/// A mobile processor with four fast cores, eight slower ones and four of low
+/// power (Core Ultra, 16 threads) had a dozen and more of our threads asked
+/// onto its four fast sets while twelve stood by. The threads a frame waits
+/// for one by one ([`keep_on_fast_cores`]) stay on the fast ones.
+fn helper_sets(sets: &[(u32, u8, u8)], fast: &[u32]) -> Vec<u32> {
+    let best = sets.iter().map(|c| c.1).max().unwrap_or(0);
+    let by_class = !fast_by_class(sets).is_empty();
+    if !by_class || fast.len() >= FEW {
+        return fast.to_vec();
+    }
+    let Some(next) = sets.iter().map(|c| c.1).filter(|&c| c < best).max() else {
+        return fast.to_vec();
+    };
+    let wide: Vec<u32> = sets.iter().filter(|c| c.1 >= next).map(|c| c.0).collect();
+    if wide.len() == sets.len() { Vec::new() } else { wide }
+}
+
 /// The sets of one fast core of the last, and all the others, for
 /// [`lane_core`]; `None` with fewer than six fast cores.
 fn one_core(sets: &[(u32, u8, u8)]) -> Option<(Vec<u32>, Vec<u32>)> {
@@ -173,8 +199,10 @@ fn lane_core() -> bool {
     *ON.get_or_init(|| std::env::var_os("VICTORY_LANE_CORE").is_some_and(|v| v == "1"))
 }
 
-/// Threads that asked: a handle of each, and whether it is the submitting one.
-static ASKED: std::sync::Mutex<Vec<(usize, bool)>> = std::sync::Mutex::new(Vec::new());
+/// Threads that asked: a handle of each, whether it is the submitting one,
+/// and what it asked as ([`stage`]'s numbers: 1 a frame waits for it, 2 and 3
+/// it shares the work or works beside it).
+static ASKED: std::sync::Mutex<Vec<(usize, bool, u32)>> = std::sync::Mutex::new(Vec::new());
 
 /// What the threads of the process, and those that asked, are told now
 /// ([`lane_core`], which may have changed).
@@ -193,21 +221,30 @@ pub(crate) fn settle() {
         let at = if others.is_empty() { null } else { others.as_ptr() };
         SetProcessDefaultCpuSets(GetCurrentProcess(), at, others.len() as u32);
     }
-    let helpers: Vec<u32> = match &one {
-        Some((own, _)) => fast.iter().copied().filter(|id| !own.contains(id)).collect(),
-        None => fast.clone(),
+    let without_own = |of: &[u32]| -> Vec<u32> {
+        match &one {
+            Some((own, _)) => of.iter().copied().filter(|id| !own.contains(id)).collect(),
+            None => of.to_vec(),
+        }
     };
-    for &(thread, lane) in ASKED.lock().unwrap_or_else(|e| e.into_inner()).iter() {
-        let sets = match &one {
+    let helpers = without_own(&fast);
+    // (the fast sets again, unless they are few: `helper_sets`)
+    let sharing = without_own(&helper_sets(&sets, &fast));
+    for &(thread, lane, asked_as) in ASKED.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        let sets: &[u32] = match &one {
             Some((own, _)) if lane => own,
+            _ if asked_as >= 2 => &sharing,
             _ => &helpers,
         };
+        // (none: no selection, every processor)
+        let at = if sets.is_empty() { null } else { sets.as_ptr() };
         // SAFETY: a handle kept open, and the system's own set ids.
-        unsafe { SetThreadSelectedCpuSets(thread as _, sets.as_ptr(), sets.len() as u32) };
+        unsafe { SetThreadSelectedCpuSets(thread as _, at, sets.len() as u32) };
     }
     tracing::info!(on = one.is_some(), core = ?one.as_ref().map(|o| &o.0), "the submitting thread has a core of its own (VICTORY_LANE_CORE)");
     tracing::info!(
         fast = fast.len(),
+        sharing = sharing.len(),
         of = sets.len(),
         by_cache = fast_by_class(&sets).is_empty() && !fast.is_empty(),
         threads = ASKED.lock().unwrap_or_else(|e| e.into_inner()).len(),
@@ -270,7 +307,7 @@ fn ask(what: &str, from: u32) {
         tracing::warn!(what, error = %std::io::Error::last_os_error(), "the thread could not be kept on the fast cores");
         return;
     }
-    ASKED.lock().unwrap_or_else(|e| e.into_inner()).push((thread as usize, what == "victory-submit"));
+    ASKED.lock().unwrap_or_else(|e| e.into_inner()).push((thread as usize, what == "victory-submit", from));
     settle();
     tracing::info!(what, fast = fast.len(), of, "the thread is kept on the fast cores (VICTORY_FAST_CORES=0: not)");
 }
@@ -320,6 +357,30 @@ mod tests {
         // A larger cache of under eight sets: nothing.
         let few: Vec<(u32, u32)> = (0..32).map(|i| (256 + i, if i < 4 { 64 * MB } else { 32 * MB })).collect();
         assert!(fast_by_cache(&sets, &few).is_empty());
+    }
+
+    #[test]
+    fn few_fast_cores_share_the_work_with_the_next_class() {
+        // A mobile processor: four fast cores, eight slower, four of low power.
+        let mobile: Vec<(u32, u8, u8)> = (0..4)
+            .map(|n| (n, 2, n as u8))
+            .chain((4..12).map(|n| (n, 1, n as u8)))
+            .chain((12..16).map(|n| (n, 0, n as u8)))
+            .collect();
+        let fast = fast_by_class(&mobile);
+        assert_eq!(fast, [0, 1, 2, 3]);
+        // The helpers: the fast and the slower ones, not those of low power.
+        assert_eq!(helper_sets(&mobile, &fast), (0..12).collect::<Vec<_>>());
+        // Two classes only (four fast, twelve others): no selection for the helpers.
+        let two: Vec<(u32, u8, u8)> = (0..4).map(|n| (n, 1, n as u8)).chain((4..16).map(|n| (n, 0, n as u8))).collect();
+        assert!(helper_sets(&two, &fast_by_class(&two)).is_empty());
+        // Eight fast cores of two sets each (a desktop): the fast ones, as before.
+        let desktop: Vec<(u32, u8, u8)> =
+            (0..16).map(|n| (n, 1, n as u8 / 2 * 2)).chain((16..24).map(|n| (n, 0, n as u8))).collect();
+        let fast = fast_by_class(&desktop);
+        assert_eq!(helper_sets(&desktop, &fast), fast);
+        // All alike: nothing is fast, and nothing is asked for.
+        assert!(helper_sets(&alike(16), &[]).is_empty());
     }
 
     #[test]
