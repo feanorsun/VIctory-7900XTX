@@ -68,11 +68,30 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
         bad.len(),
         all.len()
     );
+    if keys.is_empty() {
+        // The title records its pipelines as it runs. Before its first run
+        // there are none, and the folder they are kept in is not there yet
+        // (opening a list in it was "os error 3", with no path named).
+        println!(
+            "No pipelines are known yet in {}: the title records them as it runs. \
+             Run it once (play.cmd or scripts\\play.ps1), then warm again.",
+            dir.display()
+        );
+        return Ok(());
+    }
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let append = |path: &Path| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("opening {}", path.display()))
+    };
     let state = Mutex::new((Vec::<f64>::new(), 0usize, 0usize));
-    let done_out = Mutex::new(std::fs::OpenOptions::new().create(true).append(true).open(&done_file)?);
+    let done_out = Mutex::new(append(&done_file)?);
     // (Read back by the runs: these are made beside the others, not before.)
-    let slow_out = Mutex::new(std::fs::OpenOptions::new().create(true).append(true).open(dir.join("slow-pipelines.txt"))?);
-    let bad_out = Mutex::new(std::fs::OpenOptions::new().create(true).append(true).open(&bad_file)?);
+    let slow_out = Mutex::new(append(&dir.join("slow-pipelines.txt"))?);
+    let bad_out = Mutex::new(append(&bad_file)?);
     run_batches(
         &all,
         jobs,

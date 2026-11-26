@@ -89,6 +89,26 @@ test on battery as well as on mains.
 threads, eight join parts) assume the desktop split of fast and slow cores. Try
 `VICTORY_THIN_THREADS` and `VICTORY_JOIN_PARTS` at 4, 6 and 8 on the device.
 
+Where our threads run is settled for such a processor (`cores.rs`,
+`helper_sets`): with fewer than eight fast processors, only the threads a frame
+waits for one by one are kept on them. The threads that share a frame's work
+may run on the next class of cores too. Before, a dozen threads and more were
+asked onto four fast cores while twelve others stood by. `VICTORY_FAST_CORES=0`
+asks for nothing, to compare. Not measured.
+
+## What this repository's build said on the device (2026-11-26)
+
+From `victory warm` on the Arc B390 PC, the first output of this repository
+there:
+
+- `host adapter name=Intel(R) Arc(TM) B390 GPU vendor=0x8086 device_id=0xb080
+  uma=true`: the card shares the PC's memory, so the defaults for integrated
+  graphics are in force.
+- `host wave lanes min=16 max=32`: wave64 programs run as two waves of 32.
+- `host view heaps hold 1000000 views`, `raw_twins=false`: the driver caps a
+  view heap at a million and refuses the heap of raw twins.
+- `10 processes`: two thirds of 16 logical processors.
+
 ## The first run on such a PC (2026-11-26)
 
 One run on a PC with 32 GB shared between an integrated Intel card and the
