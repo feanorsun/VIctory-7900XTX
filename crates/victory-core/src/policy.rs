@@ -8,6 +8,9 @@
 
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(windows)]
+mod windows;
+
 /// Marker file at the root of the source tree.
 pub const ROOT_MARKER: &str = ".victory-root";
 
@@ -66,7 +69,14 @@ pub fn ensure_outside_repo(path: &Path) -> Result<(), PolicyError> {
 /// `..` (neither path has to exist yet). Compares whole components, so
 /// `cache-old` is not inside `cache`.
 pub fn is_within(path: &Path, root: &Path) -> Result<bool, PolicyError> {
-    Ok(resolve(path)?.starts_with(resolve(root)?))
+    #[cfg(windows)]
+    {
+        windows::is_within(path, root)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(resolve(path)?.starts_with(resolve(root)?))
+    }
 }
 
 /// Canonicalizes the longest existing prefix of `path` and re-appends the

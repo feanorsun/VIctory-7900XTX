@@ -158,6 +158,29 @@ mod tests {
     use std::ffi::OsString;
 
     #[test]
+    fn data_dir_override_is_checked_against_the_effective_cache_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = tmp.path().join("cache");
+        let saved = tmp.path().join("saves");
+        let nested = cache.join("saves");
+        let resolve = |file_data: &Path, env_data: &Path| {
+            let file = FilePaths {
+                cache_dir: Some(cache.clone()),
+                data_dir: Some(file_data.to_path_buf()),
+                ..Default::default()
+            };
+            Config::resolve(file, None, |key| {
+                (key == "VICTORY_DATA_DIR").then(|| env_data.as_os_str().to_owned())
+            })
+        };
+
+        let outside = cache.join("..").join("saves");
+        assert_eq!(resolve(&nested, &outside).unwrap().data_dir, outside);
+        let error = resolve(&saved, &nested).unwrap_err();
+        assert!(error.to_string().contains("data_dir"), "{error}");
+    }
+
+    #[test]
     fn environment_overrides_file() {
         let file = FilePaths {
             game_dir: Some("from-file".into()),
@@ -257,12 +280,46 @@ mod tests {
         assert!(resolve_dirs(tmp.path(), tmp.path()).is_err());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn missing_cache_dir_respects_parent_case_sensitivity() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("CaseProbe")).unwrap();
+        let ignores_case = tmp.path().join("caseprobe").is_dir();
+        let parent = tmp.path().join("not-created");
+        let cache = parent.join("Caché");
+        let alias = parent.join("CACHÉ");
+        for data in [&alias, &alias.join("data")] {
+            let result = resolve_dirs(&cache, data);
+            if ignores_case {
+                let error = result.unwrap_err();
+                assert!(error.to_string().contains("data_dir"), "{error}");
+            } else {
+                assert_eq!(result.unwrap().data_dir, *data);
+            }
+        }
+    }
+
     #[test]
     fn data_dir_inside_cache_dir_is_refused() {
         let tmp = tempfile::tempdir().unwrap();
         let cache = tmp.path().join("cache");
         assert!(resolve_dirs(&cache, &cache.join("data")).is_err());
         assert!(resolve_dirs(&cache, &cache.join("a/../data")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_dirs_follow_win32_and_verbatim_spelling_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        for name in ["cache.", "cache "] {
+            let alias = tmp.path().join(name);
+            let cache = std::path::absolute(&alias).unwrap();
+            let error = resolve_dirs(&cache, &alias).unwrap_err();
+            assert!(error.to_string().contains("data_dir"), "{error}");
+        }
+        let verbatim = tmp.path().canonicalize().unwrap();
+        assert!(resolve_dirs(&verbatim.join("cache"), &verbatim.join("cache.")).is_ok());
     }
 
     #[test]
