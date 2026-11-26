@@ -1770,6 +1770,12 @@ pub(crate) fn room(memory: Option<[u64; 4]>) -> bool {
 /// 238), and the queue was refused from the first world frame on. With
 /// their room kept, the queue stops that much earlier while the world
 /// loads and gets it back as the targets are made.
+///
+/// Those figures are the Series X profile's. With the Series S profile
+/// (1080p) the default is 1,536: one run on an Intel Arc B390 (2026-11-26)
+/// had 1,082 to 1,123 MB of them through its first 20 seconds of the world,
+/// and with 3,072 kept the queue was refused with 5.2 GB of the card's
+/// 7.4 GB budget in use. Not measured further into the world.
 #[cfg(windows)]
 pub(crate) fn targets_room_kept() -> u64 {
     use std::sync::atomic::Ordering::Relaxed;
@@ -1778,11 +1784,20 @@ pub(crate) fn targets_room_kept() -> u64 {
         std::env::var("VICTORY_CARD_ROOM_FOR_TARGETS_MB")
             .ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
-            .map_or(3072 << 20, |mb| mb.min(8192) << 20)
+            .map_or(default_targets_mb(crate::console::current()) << 20, |mb| mb.min(8192) << 20)
     });
     // Every host texture's bytes less those of the copies the title fills.
     let targets = HOST_TEXTURES[1].load(Relaxed).saturating_sub(KINDS[1].load(Relaxed));
     most.saturating_sub(targets)
+}
+
+/// The megabytes [`targets_room_kept`] keeps by default for `console`.
+#[cfg(windows)]
+fn default_targets_mb(console: crate::console::Console) -> u64 {
+    match console {
+        crate::console::Console::SeriesS => 1536,
+        crate::console::Console::SeriesX => 3072,
+    }
 }
 
 /// [`room`] as it was at most a tenth of a second ago, for a question

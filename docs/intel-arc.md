@@ -188,6 +188,34 @@ memory, started with `-Output 1280x720`:
 
 No frame time in the world is known yet.
 
+## The second run: the world, about 3 frames a second, then the card went (2026-11-26)
+
+The same PC, Series S profile, no `-Output`. The title reached the world.
+
+- **About 3 frames a second** (301 to 319 ms a frame) through the first
+  minute of the world, with the card 14 to 42 % busy. The pipeline cache was
+  cold: every frame used its whole budget of waiting for pipelines
+  (`500.8 ms waiting for pipelines`, `VICTORY_PIPELINE_WAIT_MS`, 500), 700 to
+  2,800 draws a frame were dropped as `being made`, and the process ran 3.5 to
+  3.9 s of CPU time a frame on all threads. Single compute pipelines took 8 to
+  12 s to make (the title's FSR4 passes among them), ten at once. What the
+  frame is with the pipelines made is not known: `victory warm --used` makes
+  them ahead, and `VICTORY_PIPELINE_WAIT_MS=50` shows the frame without the
+  waiting.
+- **The card stopped answering after about a minute** (`0x887A0006`, device
+  hung), while the submitting thread had been preparing one submission for
+  4.4 s. The first command not completed is command 13 of a list that used
+  `[compute 2c3592e9bbad543f]`. Open: a run with `VICTORY_D3D12_DEBUG=1` names
+  the command.
+- Three compute pipelines are refused by the driver now (`02384a60fda6f2d0`,
+  `2da4beb386509b77`, `369cbe906ea72764`), one dispatch a frame each dropped.
+- `the card has no room for more; they wait` came back at 5.2 GB of the 7.4 GB
+  budget. The cause is the 3,072 MB kept for render targets, a Series X
+  figure: this run had 1,123 MB of them. The Series S profile keeps 1,536 MB
+  now (`VICTORY_CARD_ROOM_FOR_TARGETS_MB`).
+- Memory: 16.5 GB private, 2 to 3.5 GB of the PC's RAM free, 348 MB of title
+  memory in place (73 windows, none refused by the driver).
+
 ## How to measure on the device
 
 Build as the README says (`cargo build --locked --profile diag -p victory --features diagnostics`),
