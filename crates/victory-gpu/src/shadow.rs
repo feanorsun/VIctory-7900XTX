@@ -186,9 +186,9 @@ fn default_card_limits_mb(local_vram_budget: Option<u64>) -> (u64, u64) {
     if budget_mb <= TWELVE_GIB_MB {
         (16, 512)
     } else if budget_mb < TWENTY_GIB_MB {
-        (4, 2048)
+        (4, 1024)
     } else {
-        (1, (budget_mb / 4).min(8192))
+        (1, (budget_mb / 8).min(4096))
     }
 }
 
@@ -5734,16 +5734,16 @@ mod window_tests {
         assert_eq!(default_card_limits_mb(Some(12 * GIB)), (16, 512));
 
         // 16 GB tier (> 12 GiB, < 20 GiB), including WDDM budgets around 13.5–15 GiB.
-        assert_eq!(default_card_limits_mb(Some(13 * GIB)), (4, 2048));
-        assert_eq!(default_card_limits_mb(Some(14 * GIB)), (4, 2048));
-        assert_eq!(default_card_limits_mb(Some(15 * GIB)), (4, 2048));
-        assert_eq!(default_card_limits_mb(Some(16 * GIB)), (4, 2048));
+        assert_eq!(default_card_limits_mb(Some(13 * GIB)), (4, 1024));
+        assert_eq!(default_card_limits_mb(Some(14 * GIB)), (4, 1024));
+        assert_eq!(default_card_limits_mb(Some(15 * GIB)), (4, 1024));
+        assert_eq!(default_card_limits_mb(Some(16 * GIB)), (4, 1024));
 
-        // 24–32+ GB tier (>= 20 GiB): 1 MiB min, 25% of budget capped at 8192 MiB.
-        assert_eq!(default_card_limits_mb(Some(20 * GIB)), (1, 5120));
-        assert_eq!(default_card_limits_mb(Some(24 * GIB)), (1, 6144));
-        assert_eq!(default_card_limits_mb(Some(32 * GIB)), (1, 8192));
-        assert_eq!(default_card_limits_mb(Some(48 * GIB)), (1, 8192));
+        // 24–32+ GB tier (>= 20 GiB): 1 MiB min, 12.5% of budget capped at 4096 MiB.
+        assert_eq!(default_card_limits_mb(Some(20 * GIB)), (1, 2560));
+        assert_eq!(default_card_limits_mb(Some(24 * GIB)), (1, 3072));
+        assert_eq!(default_card_limits_mb(Some(32 * GIB)), (1, 4096));
+        assert_eq!(default_card_limits_mb(Some(48 * GIB)), (1, 4096));
 
         // Explicit env overrides always win, clamp min to >= 1 MiB, and saturate on overflow.
         assert_eq!(resolve_card_limits(Some(32 * GIB), Some(8), Some(4096)), (8 * MIB, 4096 * MIB));

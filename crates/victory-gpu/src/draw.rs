@@ -183,6 +183,17 @@ fn early_budgets() -> (u64, u64) {
     })
 }
 
+/// Bytes a decoration bake may read ahead of its draw (see `early_textures`).
+fn bake_cap() -> u64 {
+    static CAP: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| {
+        std::env::var("VICTORY_BAKE_CAP_MB")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .map_or(512 << 20, |mb| mb.clamp(64, 8192) << 20)
+    })
+}
+
 /// Whether a draw of the title's bake finds the textures it picks by index
 /// as title memory has them at that moment (`VICTORY_BAKE_EXACT=0`: as the
 /// pass leaves them, as before). The pass looks at a slot whose memory was
@@ -2110,8 +2121,9 @@ impl State {
         }
         let left = bake_ms.saturating_sub(BAKED_MS.load(Ordering::Relaxed));
         let budget = if bake && left > 0 {
-            // What a bake may read must be there now: up to 2 GiB.
-            (left, 2 << 30)
+            // What a bake may read must be there now: up to 512 MiB by default
+            // (was 2 GiB; `VICTORY_BAKE_CAP_MB` sets it, 2048 for the old value).
+            (left, bake_cap())
         } else if first && early_ms > 0 {
             (early_ms, 64 << 20)
         } else {

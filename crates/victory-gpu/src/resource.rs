@@ -1707,7 +1707,8 @@ pub(crate) fn host_made<'a>(
 /// reported budget so 4–6 GiB cards do not bypass the budget check early.
 #[cfg(any(windows, test))]
 fn texture_floor_bytes(vram_budget: Option<u64>) -> u64 {
-    const MAX_FLOOR: u64 = 2 << 30;
+    // Low-VRAM default: 512 MiB (was 2 GiB) of unconditional texture copies.
+    const MAX_FLOOR: u64 = 512 << 20;
     match vram_budget {
         Some(budget) => MAX_FLOOR.min(budget / 4),
         None => MAX_FLOOR,
@@ -1724,7 +1725,7 @@ fn texture_floor_bytes(vram_budget: Option<u64>) -> u64 {
 #[cfg(windows)]
 pub(crate) fn room(memory: Option<[u64; 4]>) -> bool {
     use std::sync::atomic::Ordering::Relaxed;
-    const WITHOUT_BUDGET: u64 = 4 << 30;
+    const WITHOUT_BUDGET: u64 = 1 << 30;
     static LIMIT: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
     let limit = *LIMIT.get_or_init(|| {
         let mb = std::env::var("VICTORY_TEXTURE_BUDGET_MB").ok()?;
@@ -1832,7 +1833,7 @@ fn room_percent() -> u64 {
         std::env::var("VICTORY_TEXTURE_ROOM_PERCENT")
             .ok()
             .and_then(|v| v.trim().parse::<u64>().ok())
-            .map_or(90, |percent| percent.clamp(50, 97))
+            .map_or(75, |percent| percent.clamp(50, 97))
     })
 }
 
@@ -4606,13 +4607,12 @@ float4 lit() : SV_Target { return 1.0; }
     #[test]
     fn texture_floor_scales_with_vram_budget() {
         const GIB: u64 = 1 << 30;
-        assert_eq!(texture_floor_bytes(None), 2 * GIB);
-        assert_eq!(texture_floor_bytes(Some(4 * GIB)), GIB);
-        assert_eq!(texture_floor_bytes(Some(6 * GIB)), 6 * GIB / 4);
-        assert_eq!(texture_floor_bytes(Some(8 * GIB)), 2 * GIB);
-        assert_eq!(texture_floor_bytes(Some(12 * GIB)), 2 * GIB);
-        assert_eq!(texture_floor_bytes(Some(24 * GIB)), 2 * GIB);
-        assert_eq!(texture_floor_bytes(Some(32 * GIB)), 2 * GIB);
+        const CAP: u64 = 512 << 20;
+        assert_eq!(texture_floor_bytes(None), CAP);
+        assert_eq!(texture_floor_bytes(Some(GIB)), GIB / 4);
+        assert_eq!(texture_floor_bytes(Some(4 * GIB)), CAP);
+        assert_eq!(texture_floor_bytes(Some(8 * GIB)), CAP);
+        assert_eq!(texture_floor_bytes(Some(32 * GIB)), CAP);
     }
 
     /// A placed texture viewed from a later level has a host copy of that
