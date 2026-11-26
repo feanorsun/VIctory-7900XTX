@@ -41,7 +41,7 @@ pub fn run(
     unimplemented: Unimplemented,
     strict: bool,
     execute: bool,
-    console: Console,
+    console: Option<Console>,
 ) -> Result<()> {
     use std::sync::Arc;
     use victory_hle::{HleResolver, HostPolicy};
@@ -101,11 +101,17 @@ pub fn run(
     let temp = cfg.data_subdir(&format!("{:08X}/temp", title.id))?;
     victory_hle::modules::files::mount_at('T', &temp);
     victory_hle::runtime::set_title(victory_hle::runtime::Title { storage, ..title });
-    victory_hle::console::set(match console {
-        Console::SeriesX => victory_hle::console::Console::SeriesX,
-        Console::SeriesS => victory_hle::console::Console::SeriesS,
-    });
-    println!("console        {}", victory_hle::console::current().name());
+    let chosen = match console {
+        Some(Console::SeriesX) => victory_hle::console::Console::SeriesX,
+        Some(Console::SeriesS) => victory_hle::console::Console::SeriesS,
+        // None named: by this PC's memory (Series X does not fit in 32 GB).
+        None => victory_hle::console::Console::default_for(victory_hle::console::installed_ram()),
+    };
+    victory_hle::console::set(chosen);
+    match console {
+        Some(_) => println!("console        {}", chosen.name()),
+        None => println!("console        {} (by this PC's memory; --console to choose)", chosen.name()),
+    }
     let dlls = victory_loader::load_title_dlls(image.info(), title_dir, &images, &wanted)?;
     for (name, dll) in &dlls {
         println!("title dll      {name} at {:#x}", dll.base());
@@ -616,6 +622,6 @@ mod cpu_check_tests {
 }
 
 #[cfg(not(windows))]
-pub fn run(_: &Path, _: Unimplemented, _: bool, _: bool, _: Console) -> Result<()> {
+pub fn run(_: &Path, _: Unimplemented, _: bool, _: bool, _: Option<Console>) -> Result<()> {
     anyhow::bail!("running titles requires Windows")
 }

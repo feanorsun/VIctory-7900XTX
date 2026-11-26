@@ -53,8 +53,9 @@ the frame now is the one thread that submits the title's work to the card
 
 | Switch | What it does |
 |---|---|
-| `--console series-s` | The Series S profile: 1080p output, about 5 ms faster, a softer picture |
-| `VICTORY_OUTPUT=1920x1080` | The title renders to that output size itself (Series X profile; about 16 ms less card time) |
+| `--console series-s` | The Series S profile: 1080p output, about 5 ms faster, a softer picture. The default on a PC with 32 GB of RAM or less (`--console series-x` for the other) |
+| `VICTORY_OUTPUT=1920x1080` | The title renders to that output size itself (Series X profile; about 16 ms less card time). `scripts\play.ps1 -Output 1280x720` sets the smallest |
+| `VICTORY_RESIDENCY=0` | Turns off the memory budgets of a smaller PC, which are on by default with 32 GB of RAM or less |
 | `VICTORY_FRAME_INTERVAL_MS=16.667` | Lets the title go above 30 fps (menus and videos reach 60; the game's clock stays right) |
 | `VICTORY_AMBIENT_SETTLE` | How fast light settles after walking indoors (on by default, `250,3`; `0` turns it off) |
 | `VICTORY_TEXTURE_STORE=1` | Converted textures kept between runs (about 8 ms a frame for now: off) |
@@ -85,6 +86,10 @@ scripts\play.ps1 -Exe <path of your copy's executable>
 
 `scripts\play.ps1 -Safe` leaves out the newest, faster ways; try it first when
 something is wrong. `-RayTracing` turns the title's ray-traced indirect light on.
+
+`play.cmd` does the same from a plain command window: set `VICTORY_GAME_DIR` to
+your dump's folder and run `play.cmd`, or `play.cmd -Output 1280x720` on a PC
+with an integrated card or 32 GB of RAM (see [docs/intel-arc.md](docs/intel-arc.md)).
 
 On a hybrid-graphics PC, the runtime and offline pipeline checks prefer a
 high-performance adapter with Shader Model 6.6. The runtime logs its adapter

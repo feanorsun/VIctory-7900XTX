@@ -89,6 +89,39 @@ test on battery as well as on mains.
 threads, eight join parts) assume the desktop split of fast and slow cores. Try
 `VICTORY_THIN_THREADS` and `VICTORY_JOIN_PARTS` at 4, 6 and 8 on the device.
 
+## The first run on such a PC (2026-11-26)
+
+One run on a PC with 32 GB shared between an integrated Intel card and the
+processor, of another fork's build (codec-d/cool_fox), with the Series X
+profile: about 2 frames a second. Its log says why:
+
+- `host memory pressure` at the third frame with `physical_free_mib=130`: the
+  PC was out of RAM before the world loaded, so Windows was paging.
+- `textures picked by index: the card has no room for more; they wait`: the
+  card's budget, which is the same RAM, was full too.
+- `no wave32 lowering for this wave64 program`: one compute program does not
+  translate for a card whose widest wave is 32, and its draws are dropped. A
+  fault in the picture, not in the speed.
+- `host view heap capped at 1000000`: the title asks for 1,245,184 views and
+  the card gives a million. Views past it read nothing. Also the picture.
+
+What this repository does about the first two, by default on a PC with 32 GiB
+of RAM or less:
+
+- The console is Series S unless `--console` says otherwise (less title
+  memory, 1080p output).
+- The memory budgets of a smaller PC are on (`residency.rs`;
+  `VICTORY_RESIDENCY=0` turns them off).
+
+And on request: `play.cmd -Output 1280x720` (or `scripts\play.ps1 -Output
+1280x720`) has the title render at 853x480 and show 1280x720. That is about a
+ninth of the Series X profile's pixels.
+
+The README's own figures say the Series S profile still held about 30 GB of
+private memory and 10.5 GB of card memory on a 64 GB PC with a card of its
+own. On 32 GB shared that is still more than there is. Expect paging until the
+figures of a run of this repository say otherwise.
+
 ## How to measure on the device
 
 Build as the README says (`cargo build --locked --profile diag -p victory --features diagnostics`),

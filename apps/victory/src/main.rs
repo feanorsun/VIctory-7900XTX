@@ -151,9 +151,10 @@ enum Command {
         /// Actually start the title. Without it, stop after binding.
         #[arg(long)]
         execute: bool,
-        /// The console model the title sees (device type, memory).
-        #[arg(long, value_enum, default_value_t = Console::SeriesX)]
-        console: Console,
+        /// The console model the title sees (device type, memory). Without
+        /// it: Series S on a PC with 32 GB of RAM or less, else Series X.
+        #[arg(long, value_enum)]
+        console: Option<Console>,
         /// Arguments for the title, after `--` (it reads the whole command
         /// line; a title that relaunches itself passes some).
         #[arg(last = true)]
