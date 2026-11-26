@@ -57,6 +57,12 @@ You need Windows 10/11 x64, a CPU with AVX2, a Direct3D 12 GPU with shader
 model 6.6 and mesh shaders, Rust (the toolchain is pinned), the MSVC build
 tools, and your own dump of the title.
 
+With the game files on a 7200 rpm hard drive, mavis140 reported that characters
+stayed low-detail for minutes, textures loaded late, and dialogue was out of sync.
+On the same machine, they measured about 225 seconds from launch to the first
+world frame with the game files on the hard drive and 66 seconds with them on
+an NVMe SSD ([#146](https://github.com/avatarmanz/VIctory-7900XTX/issues/146)).
+
 ```powershell
 git clone https://github.com/avatarmanz/VIctory-7900XTX
 cd VIctory-7900XTX
