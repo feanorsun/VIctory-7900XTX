@@ -49,6 +49,8 @@ the frame now is the one thread that submits the title's work to the card
 | `VICTORY_PORT_GUARD=1` | The write guards' lock is shared by faults and refreshes, with a claim per 64 KiB block; the submission's planning runs beside it (title threads' waits 29 ms to ~2 ms a frame; -2 ms) |
 | `VICTORY_PORT_JOURNAL=1` | The heaps' records are asked for at the title's submit, and the journal's notes are split into 64 parts with locks of their own (the submit thread's waits ~5 ms + 1 ms to ~0.3 ms; -1 to -3 ms) |
 
+`scripts\play.ps1 -Ports` (or `play.cmd -Ports`) turns the five on together.
+
 ### Other switches
 
 | Switch | What it does |
