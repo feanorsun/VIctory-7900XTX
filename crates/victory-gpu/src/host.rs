@@ -10282,16 +10282,43 @@ fn stopped_command(
     if done >= count || done as usize >= history.len() {
         return None;
     }
-    let op = history[done as usize].0;
+    let op = op_text(history[done as usize]);
     Some(if done == 0 {
         format!("; no command completed of {count}; the first uncompleted is command index 0 (op {op})")
     } else {
         let last = done - 1;
-        let last_op = history[last as usize].0;
+        let last_op = op_text(history[last as usize]);
         format!(
             "; {done} of {count} commands completed, last at index {last} (op {last_op}); the first uncompleted is command index {done} (op {op})"
         )
     })
+}
+
+/// A breadcrumb operation's number, with its name where it is one a host
+/// list of ours records: "op 8" after a barrier, the stop of both device
+/// removals on an Intel Arc B390, had to be looked up to be read as a
+/// texture copy.
+fn op_text(op: D3D12_AUTO_BREADCRUMB_OP) -> String {
+    let name = match op {
+        D3D12_AUTO_BREADCRUMB_OP_SETMARKER => "a marker",
+        D3D12_AUTO_BREADCRUMB_OP_DRAWINSTANCED => "a draw",
+        D3D12_AUTO_BREADCRUMB_OP_DRAWINDEXEDINSTANCED => "an indexed draw",
+        D3D12_AUTO_BREADCRUMB_OP_EXECUTEINDIRECT => "an indirect execution",
+        D3D12_AUTO_BREADCRUMB_OP_DISPATCH => "a dispatch",
+        D3D12_AUTO_BREADCRUMB_OP_COPYBUFFERREGION => "a buffer copy",
+        D3D12_AUTO_BREADCRUMB_OP_COPYTEXTUREREGION => "a texture copy",
+        D3D12_AUTO_BREADCRUMB_OP_COPYRESOURCE => "a whole-resource copy",
+        D3D12_AUTO_BREADCRUMB_OP_RESOLVESUBRESOURCE => "a resolve",
+        D3D12_AUTO_BREADCRUMB_OP_CLEARRENDERTARGETVIEW => "a render target clear",
+        D3D12_AUTO_BREADCRUMB_OP_CLEARUNORDEREDACCESSVIEW => "an unordered access clear",
+        D3D12_AUTO_BREADCRUMB_OP_CLEARDEPTHSTENCILVIEW => "a depth clear",
+        D3D12_AUTO_BREADCRUMB_OP_RESOURCEBARRIER => "a barrier",
+        D3D12_AUTO_BREADCRUMB_OP_DISPATCHMESH => "a mesh draw",
+        D3D12_AUTO_BREADCRUMB_OP_DISPATCHRAYS => "a ray dispatch",
+        D3D12_AUTO_BREADCRUMB_OP_BUILDRAYTRACINGACCELERATIONSTRUCTURE => "an acceleration structure build",
+        _ => return op.0.to_string(),
+    };
+    format!("{}, {name}", op.0)
 }
 
 #[cfg(test)]
@@ -10313,11 +10340,11 @@ mod breadcrumbs {
         );
         assert_eq!(
             stopped_command(&history, 1, 4).as_deref(),
-            Some("; 1 of 4 commands completed, last at index 0 (op 46); the first uncompleted is command index 1 (op 3)")
+            Some("; 1 of 4 commands completed, last at index 0 (op 46); the first uncompleted is command index 1 (op 3, a draw)")
         );
         assert_eq!(
             stopped_command(&history, 3, 4).as_deref(),
-            Some("; 3 of 4 commands completed, last at index 2 (op 15); the first uncompleted is command index 3 (op 6)")
+            Some("; 3 of 4 commands completed, last at index 2 (op 15, a barrier); the first uncompleted is command index 3 (op 6, a dispatch)")
         );
 
         // A finished list has no stop command; nor does a driver that

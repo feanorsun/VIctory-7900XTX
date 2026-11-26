@@ -199,9 +199,8 @@ The same PC, Series S profile, no `-Output`. The title reached the world.
   2,800 draws a frame were dropped as `being made`, and the process ran 3.5 to
   3.9 s of CPU time a frame on all threads. Single compute pipelines took 8 to
   12 s to make (the title's FSR4 passes among them), ten at once. What the
-  frame is with the pipelines made is not known: `victory warm --used` makes
-  them ahead, and `VICTORY_PIPELINE_WAIT_MS=50` shows the frame without the
-  waiting.
+  frame is with the pipelines made is not known. (This said `victory warm
+  --used` makes them ahead. It could not: see the third run.)
 - **The card stopped answering after about a minute** (`0x887A0006`, device
   hung), while the submitting thread had been preparing one submission for
   4.4 s. The first command not completed is command 13 of a list that used
@@ -244,3 +243,36 @@ numbers with the adapter's name and driver version.
 - Unit tests for `hardware.rs` are written; they have not been run, because they
   need Windows and the device.
 - Not run on Intel hardware. None of the numbers above are Intel numbers.
+
+## The third run: the card went three frames into the world (2026-11-26)
+
+The same PC and settings, ten minutes later. Not fixed: what follows is what
+the log shows and what was changed for the next run.
+
+- **The same device removal** (`0x887A0006`, device hung) at about frame
+  1068, three frames after the world began. The first command not completed
+  is again an op 8 directly after an op 15: a texture copy after a barrier
+  (command 142 of 198 of `victory host list 43`; in the second run command 13
+  of list 961). Nothing of ours was being submitted for 4.7 s before. Which
+  texture is not known. The report names the operations now; the copy itself
+  needs a run with the debug layer: `play.cmd -Set VICTORY_D3D12_DEBUG=1`.
+- **The PC was out of memory**: `the PC has 98 MB free`, and of the process's
+  14,420 MB private only 6,341 MB were in memory, on a PC that shows 23.4 GiB.
+  Frames took 1.7 s, the title waited 3.1 s at presents, and the pipeline
+  library's mapped file read as zeros in 7 pages. Who held the other 17 GB is
+  not in the log. Below 1 GiB free the memory line now names the eight
+  processes holding the most. A card that waits for memory to be paged in for
+  longer than Windows' 2 s (`TdrDelay`) is reset, which reads exactly like
+  this removal; that this is the cause is a guess, not a finding.
+- **`victory warm --used` found nothing** (`0 pipelines known`) after two
+  runs that drew the world. A run writes its pipelines down only with
+  `VICTORY_PIPELINE_BOOK=1`, and the launcher did not set it. It does now; the
+  message of `warm` says so.
+- **`play.cmd -More @{...}` cannot work**: `play.cmd` starts the script with
+  `powershell -File`, where a table arrives as text. `-Set NAME=VALUE,...` is
+  the form for it.
+- **Waiting for pipelines**: a pipeline is waited for during one budget
+  (500 ms) from its first use on, no longer in every frame until it is made
+  (`VICTORY_PIPELINE_WAIT_ONCE=0` for the old way). The compute pipelines that
+  take 8 to 17 s here took the whole budget of every frame of those seconds.
+  Not measured on this PC yet.
