@@ -84,6 +84,20 @@ scripts\play.ps1 -Exe <path of your copy's executable>
 `scripts\play.ps1 -Safe` leaves out the newest, faster ways; try it first when
 something is wrong. `-RayTracing` turns the title's ray-traced indirect light on.
 
+**Black prologue scene.** On an RTX 3070 (8 GB) with 15.2 GB of system RAM,
+huihuihuha used `-Safe` and turned off all four settings below together. The
+prologue rendered again at a reported 3.9–5 FPS. About five minutes later, the
+game stopped with `no host list for a state prelude`. [Report #124](https://github.com/avatarmanz/VIctory-7900XTX/issues/124)
+
+```powershell
+.\scripts\play.ps1 -Build release -Safe -Exe 'C:\path\to\game.exe' -More @{
+    VICTORY_TEXTURE_NO_WAIT = '0'
+    VICTORY_CARD_STEPS      = '0'
+    VICTORY_WIDE_BACK       = '0'
+    VICTORY_AMBIENT         = '0'
+}
+```
+
 On a hybrid-graphics PC, the runtime and offline pipeline checks prefer a
 high-performance adapter with Shader Model 6.6. The runtime logs its adapter
 name, PCI vendor and device IDs, and dedicated VRAM. Set
