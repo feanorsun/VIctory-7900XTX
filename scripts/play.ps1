@@ -3,13 +3,21 @@
 # -Safe         without the newer, faster ways (the first thing to try when something is wrong)
 # -RayTracing   the title's own ray-traced indirect light: lit interiors, about a third slower
 # -Build        target\diag (the default, the build all measurements are of) or target\release
+# -Console      auto (the default: Series S on a PC with 32 GB of RAM or less, else Series X), series-x or series-s
+# -Output       the title's output size: 1280x720, 1664x936, 1920x1080, 2560x1440 or 3840x2160.
+#               It renders at two thirds of it, so 1280x720 is the least work for the card.
+# -Ports        the renderer patches 1, 2, 5, 6 and 7 of the README, all on (off by default while they are
+#               tested; together 57-75 ms became about 45 ms a frame on the PC they were measured on)
 # -More         other settings: -More @{VICTORY_PANEL='1'}
 # Run it from a normal window, not as administrator: the driver then keeps its shader cache elsewhere.
 param(
     [Parameter(Mandatory)][string]$Exe,
     [switch]$Safe,
     [switch]$RayTracing,
+    [switch]$Ports,
     [ValidateSet('diag', 'release')][string]$Build = 'diag',
+    [ValidateSet('auto', 'series-x', 'series-s')][string]$Console = 'auto',
+    [string]$Output = '',
     [hashtable]$More = @{}
 )
 $settings = @{
@@ -24,7 +32,15 @@ if ($Safe) {
     $settings.VICTORY_THIN = '1'; $settings.VICTORY_JOIN_PARTS = '8'; $settings.VICTORY_UPLOAD_AHEAD = '1'
 }
 if ($RayTracing) { $settings.VICTORY_BVH_BUILDER = '1' }
+if ($Output) { $settings.VICTORY_OUTPUT = $Output }
+if ($Ports) {
+    $settings.VICTORY_PORT_CONSTANTS = '1'; $settings.VICTORY_PORT_DESCRIPTORS = '1'; $settings.VICTORY_PORT_CBV = '1'
+    $settings.VICTORY_PORT_GUARD = '1'; $settings.VICTORY_PORT_JOURNAL = '1'
+}
 foreach ($k in $More.Keys) { $settings[$k] = $More[$k] }
+# (Without --console the program chooses by this PC's memory.)
+$consoleArgs = @()
+if ($Console -ne 'auto') { $consoleArgs = @('--console', $Console) }
 
 $victory = Join-Path $PSScriptRoot "..\target\$Build\victory.exe"
 if (-not (Test-Path $victory)) { Write-Host "No $victory. Build it first (README.md)."; exit 1 }
@@ -42,4 +58,4 @@ if ($discarded) {
 }
 $Exe = (Resolve-Path $Exe).Path
 Push-Location (Join-Path $PSScriptRoot '..')   # victory.toml is looked for here
-try { & $victory run $Exe --execute } finally { Pop-Location }
+try { & $victory run $Exe --execute @consoleArgs } finally { Pop-Location }

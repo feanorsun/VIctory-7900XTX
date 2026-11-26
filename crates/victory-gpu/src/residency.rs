@@ -1,7 +1,8 @@
 //! Host-memory admission for speculative texture work and reusable upload storage.
 //!
 //! From codec-d/cool_fox (641835a4, fabb872a, c64fc9b4, 08e4574d, e94d277a; the
-//! values of the last). Only with `VICTORY_RESIDENCY=1` ([`on`]): the memory
+//! values of the last). With `VICTORY_RESIDENCY=1`, and by default on a PC
+//! with 32 GiB of RAM or less (`VICTORY_RESIDENCY=0`: off) ([`on`]): the memory
 //! of the system is then asked once a second; below 3 GiB of free RAM or 4 GiB
 //! of commit (out again above 5 / 6) texture prefetch is limited to 64 MiB a
 //! frame and idle scratch and staging blocks are let go; below 1.5 GiB of
@@ -16,10 +17,35 @@ use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORY
 
 const MIB: u64 = 1 << 20;
 
-/// `VICTORY_RESIDENCY=1`: the memory budgets of this module (off by default).
+/// The memory budgets of this module: `VICTORY_RESIDENCY=1` on, any other
+/// value off; without it on where the PC has 32 GiB of RAM or less
+/// ([`on_by_default`]). The crate's own tests run without it unless they ask.
 pub(crate) fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("VICTORY_RESIDENCY").is_some_and(|v| v == "1"))
+    *ON.get_or_init(|| match std::env::var("VICTORY_RESIDENCY") {
+        Ok(v) => v == "1",
+        Err(_) => !cfg!(test) && on_by_default(memory_status().map(|s| s.ullTotalPhys)),
+    })
+}
+
+/// Without the switch: on a PC with 32 GiB of RAM or less. A run on one (32 GB
+/// shared with an integrated card, the Series X profile) had 130 MB of RAM
+/// free at its third frame.
+fn on_by_default(total: Option<u64>) -> bool {
+    total.is_some_and(|total| total <= 32 * GIB)
+}
+
+#[cfg(test)]
+mod default_tests {
+    use super::{GIB, on_by_default};
+
+    #[test]
+    fn the_budgets_are_on_by_default_only_on_a_small_pc() {
+        assert!(on_by_default(Some(16 * GIB)));
+        assert!(on_by_default(Some(32 * GIB)));
+        assert!(!on_by_default(Some(64 * GIB)));
+        assert!(!on_by_default(None));
+    }
 }
 const GIB: u64 = 1 << 30;
 static PRESSURED: AtomicBool = AtomicBool::new(false);

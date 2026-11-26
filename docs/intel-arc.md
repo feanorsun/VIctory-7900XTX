@@ -57,6 +57,8 @@ been measured on Intel yet.
   - Still large and not touched here: upload memory (about 4 GB in the notes)
     and the title's own memory (40 to 46 GB in total). Run with
     `VICTORY_MEMORY_MAP=1` to see the breakdown on the device.
+  - The rest of the shared-memory path (one copy instead of two) is staged and
+    gated in [shared-memory-plan.md](shared-memory-plan.md). Only stage 1 is done.
 
 ## What it does not do, and why
 
@@ -86,6 +88,56 @@ test on battery as well as on mains.
 **4. Thread counts for a hybrid mobile package.** The fixed defaults (eight list
 threads, eight join parts) assume the desktop split of fast and slow cores. Try
 `VICTORY_THIN_THREADS` and `VICTORY_JOIN_PARTS` at 4, 6 and 8 on the device.
+
+## The first run on such a PC (2026-11-26)
+
+One run on a PC with 32 GB shared between an integrated Intel card and the
+processor, of another fork's build (codec-d/cool_fox), with the Series X
+profile: about 2 frames a second. Its log says why:
+
+- `host memory pressure` at the third frame with `physical_free_mib=130`: the
+  PC was out of RAM before the world loaded, so Windows was paging.
+- `textures picked by index: the card has no room for more; they wait`: the
+  card's budget, which is the same RAM, was full too.
+- `no wave32 lowering for this wave64 program`: one compute program (hash
+  `02384a60fda6f2d0`) did not translate for a card whose widest wave is 32, and
+  its draws were dropped. That is the other fork's translator. This one tries
+  a wave64 program in several more forms on such a card (`emit/mod.rs`: without
+  early-outs, without skips, each host wave as its own), so the program may
+  translate here. A run of this repository says: look for `shader does not
+  translate` in its log, and run once with `VICTORY_WAVE_WHY=1` if it is there.
+- `host view heap capped at 1000000`: the title asks for 1,245,184 views and
+  the driver gives a million. Not a fault by itself: cards that cap there
+  (NVIDIA) run the same way, the title's highest slot in use is about 720,000,
+  and 737,000 title slots are left after the dynamic ones
+  (`descriptor/host.rs`, `DYNAMIC`).
+
+One more thing the smaller picture avoids: the title's tile lists are indirect
+dispatches of one group per 8x4 tile, and on a card that is not AMD they are cut
+at 65,535 groups (`indirect.rs`, `widest`). At 2560x1440 that is 115,200 tiles
+and the lists are cut; at 1280x720 it is 28,800 and they are not.
+
+What this repository does about the first two, by default on a PC with 32 GiB
+of RAM or less:
+
+- The console is Series S unless `--console` says otherwise (less title
+  memory, 1080p output).
+- The memory budgets of a smaller PC are on (`residency.rs`;
+  `VICTORY_RESIDENCY=0` turns them off).
+
+And on request: `play.cmd -Output 1280x720` (or `scripts\play.ps1 -Output
+1280x720`) has the title render at 853x480 and show 1280x720. That is about a
+ninth of the Series X profile's pixels.
+
+`-Ports` turns on the five renderer patches of the README together (57-75 ms to
+about 45 ms a frame where they were measured, an AMD card). They are off by
+default while they are tested, and none has run on an Intel card. Try the
+smaller picture first, then add `-Ports`, so a fault can be told apart.
+
+The README's own figures say the Series S profile still held about 30 GB of
+private memory and 10.5 GB of card memory on a 64 GB PC with a card of its
+own. On 32 GB shared that is still more than there is. Expect paging until the
+figures of a run of this repository say otherwise.
 
 ## How to measure on the device
 
