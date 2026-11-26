@@ -47,9 +47,16 @@ pub(crate) fn room(memory: Option<[u64; 4]>) {
 
 fn spares(memory: Option<[u64; 4]>, keep: bool) -> usize {
     match memory {
-        Some([budget, used, ..]) if keep && u128::from(used) * 100 < u128::from(budget) * 85 => SPARE_KEPT,
+        Some([budget, used, ..]) if keep && u128::from(used) * 100 < u128::from(budget) * 85 => kept_blocks(),
         _ => SPARE,
     }
+}
+
+/// The empty texture blocks kept while the card has room: [`SPARE_KEPT`], or
+/// on integrated graphics (where a block is the PC's memory) one per 64 MB of
+/// a 32nd of installed RAM: 16 at 32 GB, 1 GB.
+fn kept_blocks() -> usize {
+    crate::hardware::ram_share(32).map_or(SPARE_KEPT, |share| ((share / BLOCK) as usize).clamp(SPARE, SPARE_KEPT))
 }
 
 /// Milliseconds until a piece given back is used again. (It was three

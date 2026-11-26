@@ -1,8 +1,9 @@
 //! What the host's graphics adapter is, logged once when the device is made:
 //! its vendor and device ids, its name, and whether it shares memory with the
 //! processor (integrated graphics, such as Intel Arc and Xe iGPUs, which use
-//! the system's own memory). Nothing branches on it yet; the log says which
-//! path a run took, so a measurement can be read against the hardware.
+//! the system's own memory). On integrated graphics that sets the memory
+//! defaults (`integrated`, `ram_share`): the caches keep less of the PC's RAM
+//! empty there. The log says which path a run took.
 
 use windows::Win32::Graphics::Direct3D12::{
     D3D12_FEATURE_ARCHITECTURE1, D3D12_FEATURE_DATA_ARCHITECTURE1, ID3D12Device,
@@ -15,6 +16,37 @@ static INTEGRATED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 /// false until then.
 pub(crate) fn integrated() -> bool {
     INTEGRATED.get().copied().unwrap_or(false)
+}
+
+/// The installed RAM divided by `unit`, on integrated graphics: what a cache
+/// may keep empty there, since the card's memory is the PC's own. `None` on a
+/// card with memory of its own, whose empty blocks cost the PC nothing.
+pub(crate) fn ram_share(unit: u64) -> Option<u64> {
+    share_of(integrated(), total_ram(), unit)
+}
+
+fn total_ram() -> Option<u64> {
+    static TOTAL: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *TOTAL.get_or_init(crate::host::total_physical_ram)
+}
+
+fn share_of(integrated: bool, total: Option<u64>, unit: u64) -> Option<u64> {
+    if !integrated {
+        return None;
+    }
+    total.map(|total| total / unit.max(1))
+}
+
+#[cfg(test)]
+mod share_tests {
+    use super::share_of;
+
+    #[test]
+    fn only_integrated_graphics_are_limited_by_the_pc_ram() {
+        assert_eq!(share_of(false, Some(32 << 30), 32), None);
+        assert_eq!(share_of(true, Some(32 << 30), 32), Some(1 << 30));
+        assert_eq!(share_of(true, None, 32), None);
+    }
 }
 
 /// PCI vendor ids.

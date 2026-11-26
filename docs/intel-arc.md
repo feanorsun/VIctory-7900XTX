@@ -22,7 +22,7 @@ been measured on Intel yet.
 
 - **`crates/victory-gpu/src/hardware.rs`** logs the host adapter once at start:
   vendor, device id, name, UMA, tile-based. Look for the `host adapter` line in a
-  run's log. Nothing branches on it.
+  run's log. On integrated graphics it also sets the memory defaults below.
 - **`.cargo/config.toml`** builds Windows code for `x86-64-v3` (AVX2, FMA, BMI2,
   and the rest of that level). Intel Core Ultra and the AMD machine both have it.
   Float results do not change. It is not measured yet.
@@ -45,6 +45,18 @@ been measured on Intel yet.
     may fill 70 % of the card's budget, which here is the PC's memory, so about
     a fifth of 32 GB is left for the title and the system. Costs more uploads
     when textures are swapped. Set it to 90 to revert.
+  - Caches that keep memory empty for reuse are sized from installed RAM (32 GB
+    as the example). Each keeps the smaller of its old limit and its share:
+    - empty texture blocks: 1/32 of RAM, 1 GB (was 4 GB);
+    - scratch chunks for command lists: 1/128 of RAM, 256 MB (was 1 GB);
+    - idle command lists: one per 128 MB of RAM, 256 (was 512).
+
+    The cost is re-creating those objects more often, which shows up as
+    stutter when a scene changes quickly. Each limit is a guess and is not
+    measured. Revert by setting the limits back in the code, or measure first.
+  - Still large and not touched here: upload memory (about 4 GB in the notes)
+    and the title's own memory (40 to 46 GB in total). Run with
+    `VICTORY_MEMORY_MAP=1` to see the breakdown on the device.
 
 ## What it does not do, and why
 

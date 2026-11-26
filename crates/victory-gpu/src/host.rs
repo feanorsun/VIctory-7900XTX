@@ -1848,6 +1848,12 @@ const SPARE_MOST: u64 = 128 << 20;
 /// The same with [`keep_freed`].
 const SPARE_KEPT: u64 = 1 << 30;
 
+/// [`SPARE_KEPT`], or on integrated graphics (where chunks are the PC's own
+/// memory) a 128th of installed RAM: 256 MB at 32 GB.
+fn kept_scratch() -> u64 {
+    crate::hardware::ram_share(128).map_or(SPARE_KEPT, |share| share.min(SPARE_KEPT))
+}
+
 /// Whether lists share their scratch chunks: a list takes a chunk when it
 /// first needs one, a small one first, and gives all of them back when it
 /// is reset or dropped, for the next list. Before, a list kept every chunk
@@ -1927,7 +1933,7 @@ fn give_chunks(chunks: Vec<(Chunk, u64)>) {
         let mut spare = SPARE.lock().unwrap_or_else(|e| e.into_inner());
         for (chunk, size) in chunks {
             let back = if scratch_pool() {
-                spare.give(chunk, size, if keep_freed() { SPARE_KEPT } else { SPARE_MOST })
+                spare.give(chunk, size, if keep_freed() { kept_scratch() } else { SPARE_MOST })
             } else {
                 Some(chunk)
             };
