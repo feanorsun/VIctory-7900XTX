@@ -289,7 +289,7 @@ pub(crate) fn amd(device: &ID3D12Device) -> bool {
         CreateDXGIFactory2::<IDXGIFactory4>(DXGI_CREATE_FACTORY_FLAGS(0))
             .and_then(|f| f.EnumAdapterByLuid::<IDXGIAdapter1>(device.GetAdapterLuid()))
             .and_then(|a| a.GetDesc1())
-            .is_ok_and(|d| d.VendorId == 0x1002)
+            .is_ok_and(|d| d.VendorId == crate::hardware::VENDOR_AMD)
     }
 }
 

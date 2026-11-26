@@ -71,7 +71,7 @@ What is known to be wrong:
 
 ## How to run it
 
-You need Windows 10/11 x64, a CPU with AVX2, a Direct3D 12 GPU with shader
+You need Windows 10/11 x64, a CPU with AVX2 (the x86-64-v3 level the build targets), a Direct3D 12 GPU with shader
 model 6.6 and mesh shaders, Rust (the toolchain is pinned), the MSVC build
 tools, and your own dump of the title.
 
@@ -99,6 +99,9 @@ Before the first run, ahead of time (both can be stopped and go on later):
 target\diag\victory.exe shaders <the shader archives>   # every shader translated, minutes
 target\diag\victory.exe warm --used                     # pipelines earlier runs drew with, for a new driver or build
 ```
+
+Intel Arc (integrated) and Intel mobile processors: what is and is not tuned
+for them yet, and how to measure it, is in [docs/intel-arc.md](docs/intel-arc.md).
 
 Commands, debugging switches and upstream's own description:
 [docs/README-fxceless.md](docs/README-fxceless.md). Every `VICTORY_...` switch is

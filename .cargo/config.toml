@@ -1,2 +1,10 @@
 [alias]
 xtask = "run --quiet --package xtask --"
+
+# The processors this runs on (Intel Core Ultra and Ryzen, Intel 12th gen and
+# newer) all have x86-64-v3: AVX2, FMA, BMI2, LZCNT, MOVBE, F16C. The README
+# already asks for AVX2, so the compiler may use the whole level without a
+# run-time check. Rust does not contract a*b+c into FMA by itself, so float
+# results do not change. Not yet measured on any machine: see docs/intel-arc.md.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=x86-64-v3"]

@@ -143,15 +143,25 @@ pub(crate) fn long_ago(moment: u64, ms: u64, frames: u64) -> bool {
     (now >> 32).saturating_sub(moment >> 32) >= frames && tenths * 100 >= ms
 }
 
-/// Available physical RAM on the host in bytes, from `GlobalMemoryStatusEx`.
-pub(crate) fn available_physical_ram() -> Option<u64> {
+/// The host's memory status from `GlobalMemoryStatusEx`, if the call works.
+fn memory_status() -> Option<windows_sys::Win32::System::SystemInformation::MEMORYSTATUSEX> {
     use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
     // SAFETY: plain data the call fills in.
     let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
     m.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
     // SAFETY: a sized structure.
     let ok = unsafe { GlobalMemoryStatusEx(&mut m) } != 0;
-    ok.then_some(m.ullAvailPhys)
+    ok.then_some(m)
+}
+
+/// Available physical RAM on the host in bytes, from `GlobalMemoryStatusEx`.
+pub(crate) fn available_physical_ram() -> Option<u64> {
+    memory_status().map(|m| m.ullAvailPhys)
+}
+
+/// Installed physical RAM on the host in bytes.
+pub(crate) fn total_physical_ram() -> Option<u64> {
+    memory_status().map(|m| m.ullTotalPhys)
 }
 
 /// How long host copies of textures the title fills must have been idle to
@@ -1054,6 +1064,8 @@ fn create() -> windows::core::Result<Host> {
             let amd = crate::indirect::amd(&device);
             victory_shader::emit::set_host_rdna(amd && o1.WaveLaneCountMin == 32 && o1.WaveLaneCountMax == 64);
         }
+        // What the adapter is (vendor, UMA): read it from the log of a run, not from the README.
+        crate::hardware::log(&device);
         let messages = debug
             .then(|| device.cast::<ID3D12InfoQueue>().ok())
             .flatten();
@@ -1978,6 +1990,12 @@ const SPARE_MOST: u64 = 128 << 20;
 /// The same with [`keep_freed`].
 const SPARE_KEPT: u64 = 1 << 30;
 
+/// [`SPARE_KEPT`], or on integrated graphics (where chunks are the PC's own
+/// memory) a 128th of installed RAM: 256 MB at 32 GB.
+fn kept_scratch() -> u64 {
+    crate::hardware::ram_share(128).map_or(SPARE_KEPT, |share| share.min(SPARE_KEPT))
+}
+
 /// Whether lists share their scratch chunks: a list takes a chunk when it
 /// first needs one, a small one first, and gives all of them back when it
 /// is reset or dropped, for the next list. Before, a list kept every chunk
@@ -2057,7 +2075,8 @@ fn give_chunks(chunks: Vec<(Chunk, u64)>) {
         let mut spare = SPARE.lock().unwrap_or_else(|e| e.into_inner());
         for (chunk, size) in chunks {
             let back = if scratch_pool() {
-                let limit = if keep_freed() && !crate::residency::limited_host_ram() { SPARE_KEPT } else { SPARE_MOST };
+                // Upstream's residency limit (VICTORY_RESIDENCY=1, low RAM) wins over the share.
+                let limit = if keep_freed() && !crate::residency::limited_host_ram() { kept_scratch() } else { SPARE_MOST };
                 spare.give(chunk, size, limit)
             } else {
                 Some(chunk)
