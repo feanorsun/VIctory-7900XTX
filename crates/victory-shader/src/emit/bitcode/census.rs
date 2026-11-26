@@ -1,12 +1,13 @@
 //! Counts of a module's instructions by kind (a diagnostic): what a
 //! translated program costs before the driver's compiler sees it.
 //!
-//! `VICTORY_SHADER_CENSUS` (any value) turns the counting on; the counts of
-//! the module a thread wrote last are read with [`take`]. The `translate`
-//! command writes them as a table (see `apps/victory/src/translate.rs`).
+//! `VICTORY_SHADER_CENSUS` (any value) turns the counting on. The `translate`
+//! command uses [`take`] to find the selected module's counts and writes them
+//! as a table (see `apps/victory/src/translate.rs`).
 
 use super::{Cast, Module, Op, Tag, Term, V};
 use std::cell::RefCell;
+use std::collections::VecDeque;
 
 /// The kinds, in the order of [`Census::counts`].
 pub const KINDS: [&str; 26] = [
@@ -44,11 +45,13 @@ pub struct Census {
     pub counts: [u32; KINDS.len()],
 }
 
+const MAX_WRITTEN: usize = 64;
+
 thread_local! {
-    /// The modules this thread wrote since the last [`take`]: the length and
-    /// a hash of each one's bitcode, with its counts (a program may be
-    /// emitted in several forms before one is kept).
-    static WRITTEN: RefCell<Vec<(usize, u64, Census)>> = const { RefCell::new(Vec::new()) };
+    /// Each recent candidate's bitcode length, hash and counts. A program
+    /// may be emitted in several forms before the caller selects one.
+    static WRITTEN: RefCell<VecDeque<(usize, u64, Census)>> =
+        const { RefCell::new(VecDeque::new()) };
 }
 
 fn fnv(bytes: &[u8]) -> u64 {
@@ -64,7 +67,8 @@ pub fn enabled() -> bool {
 }
 
 /// The counts of the module whose bitcode the container `dxil` holds, if
-/// this thread wrote it since the last call (which forgets the others).
+/// it is among this thread's last 64 candidates since the last call.
+/// Every call forgets the whole batch, even when there is no match.
 pub fn take(dxil: &[u8]) -> Option<Census> {
     let written = WRITTEN.with(|l| std::mem::take(&mut *l.borrow_mut()));
     let at = dxil.windows(4).position(|w| w == b"BC\xC0\xDE")?;
@@ -81,8 +85,16 @@ pub(crate) fn note(m: &Module, bitcode: &[u8]) {
     if !enabled() {
         return;
     }
-    let c = m.census();
-    WRITTEN.with(|l| l.borrow_mut().push((bitcode.len(), fnv(bitcode), c)));
+    record(bitcode, m.census());
+}
+
+fn record(bitcode: &[u8], counts: Census) {
+    WRITTEN.with_borrow_mut(|written| {
+        if written.len() == MAX_WRITTEN {
+            written.pop_front();
+        }
+        written.push_back((bitcode.len(), fnv(bitcode), counts));
+    });
 }
 
 fn kind(name: &str) -> usize {
@@ -170,5 +182,61 @@ impl Module {
             }
         }
         c
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bitcode(id: u8) -> [u8; 5] {
+        [b'B', b'C', 0xc0, 0xde, id]
+    }
+
+    fn note_total(id: u8, total: u32) {
+        let mut census = Census::default();
+        census.counts[0] = total;
+        record(&bitcode(id), census);
+    }
+
+    fn fill_window() {
+        for id in 0..=64 {
+            note_total(id, u32::from(id));
+        }
+    }
+
+    #[test]
+    fn recording_without_a_consumer_evicts_the_oldest_candidate() {
+        fill_window();
+        assert_eq!(WRITTEN.with(|written| written.borrow().len()), 64);
+        assert_eq!(take(&bitcode(0)), None);
+    }
+
+    #[test]
+    fn the_oldest_retained_candidate_can_still_match() {
+        fill_window();
+        assert_eq!(take(&bitcode(1)).unwrap().counts[0], 1);
+        assert_eq!(take(&bitcode(64)), None);
+    }
+
+    #[test]
+    fn the_newest_matching_candidate_wins_and_take_drains_the_batch() {
+        note_total(5, 1);
+        note_total(5, 2);
+        note_total(6, 3);
+        let mut container = b"prefix".to_vec();
+        container.extend(bitcode(5));
+        container.extend(b"suffix");
+        assert_eq!(take(&container).unwrap().counts[0], 2);
+        assert_eq!(take(&bitcode(6)), None);
+    }
+
+    #[test]
+    fn missing_matches_and_missing_bitcode_both_drain_the_batch() {
+        for container in [&bitcode(8)[..], &b"no bitcode"[..]] {
+            note_total(7, 1);
+            assert_eq!(take(container), None);
+            assert_eq!(take(&bitcode(7)), None);
+        }
     }
 }

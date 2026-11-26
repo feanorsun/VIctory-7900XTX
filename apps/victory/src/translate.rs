@@ -641,7 +641,7 @@ fn translate_programs(container: &Container, programs: Vec<NativeProgram>, examp
                     *counter(t, p.stage, 0) += 1;
                     match emit::emit_with_retries(container, &p, &program, &s, &i, &r) {
                         Ok(shader) => {
-                            census_line(&label(), &p, &program, &shader);
+                            census_line(&label(), p.wave64, &program, &shader);
                             *counter(t, p.stage, 1) += 1;
                             check(shader, t, checks, label);
                         }
@@ -668,18 +668,22 @@ fn translate_programs(container: &Container, programs: Vec<NativeProgram>, examp
 /// its label, the console program's instructions by encoding class (a
 /// static count of the whole program, not of one thread's path), and the
 /// host module's instructions by kind (`emit::census::KINDS`).
-fn census_line(label: &str, native: &NativeProgram, p: &ir::Program, shader: &emit::HostShader) {
+fn census_line(label: &str, wave64: bool, p: &ir::Program, shader: &emit::HostShader) {
     use std::io::Write;
     use victory_shader::gfx10::Fields;
     static OUT: std::sync::OnceLock<Option<Mutex<std::fs::File>>> = std::sync::OnceLock::new();
+    if !emit::census::enabled() {
+        return;
+    }
+    // Consume this translation's candidates even if opening the output failed.
+    let Some(census) = emit::census::take(&shader.dxil) else {
+        return;
+    };
     let Some(out) = OUT.get_or_init(|| {
         let path = std::env::var_os("VICTORY_SHADER_CENSUS")?;
         let file = std::fs::OpenOptions::new().create(true).append(true).open(path).ok()?;
         Some(Mutex::new(file))
     }) else {
-        return;
-    };
-    let Some(census) = emit::census::take(&shader.dxil) else {
         return;
     };
     // total, vector, scalar, descriptor loads, buffer and memory, image, LDS, control, other
@@ -698,7 +702,7 @@ fn census_line(label: &str, native: &NativeProgram, p: &ir::Program, shader: &em
         };
         console[k] += 1;
     }
-    let mut line = format!("{label}\twave64={}", u8::from(native.wave64));
+    let mut line = format!("{label}\twave64={}", u8::from(wave64));
     for (name, n) in ["c_total", "c_valu", "c_sop", "c_smem", "c_buffer", "c_image", "c_ds", "c_sopp", "c_other"].iter().zip(console) {
         line.push_str(&format!("\t{name}={n}"));
     }
@@ -977,6 +981,74 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
+    use super::{census_line, emit, host, ir};
+    use std::{fs, path::Path, process::Command};
+
+    // Both the census switch and the output file are cached for the process.
+    fn with_census_output(directory: bool, check: impl FnOnce(&Path)) {
+        const CHILD: &str = "VICTORY_TEST_CENSUS_OUTPUT";
+        if let Some(path) = std::env::var_os(CHILD) {
+            check(Path::new(&path));
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("census.tsv");
+        if directory {
+            fs::create_dir(&path).unwrap();
+        }
+        let thread = std::thread::current();
+        let status = Command::new(std::env::current_exe().unwrap())
+            .args([
+                thread.name().unwrap(),
+                "--exact",
+                "--test-threads=1",
+                "--nocapture",
+            ])
+            .env(CHILD, &path)
+            .env("VICTORY_SHADER_CENSUS", &path)
+            .status()
+            .unwrap();
+        assert!(status.success(), "census test process exited with {status}");
+    }
+
+    #[test]
+    fn census_drains_each_batch_when_output_is_unavailable() {
+        with_census_output(true, |path| {
+            assert!(path.is_dir());
+            let program = ir::build(&0xbf81_0000u32.to_le_bytes(), false, 0).unwrap(); // s_endpgm
+            let probe = host::stub_ps();
+            assert!(emit::census::take(&probe.dxil).is_some());
+            for batch in 1..=2 {
+                let shader = host::stub_ps();
+                census_line("pixel", false, &program, &shader);
+                assert_eq!(emit::census::take(&shader.dxil), None, "batch {batch}");
+            }
+        });
+    }
+
+    #[test]
+    fn census_appends_counts_for_the_selected_candidate() {
+        with_census_output(false, |path| {
+            fs::write(path, "previous\n").unwrap();
+            let program = ir::build(&0xbf81_0000u32.to_le_bytes(), false, 0).unwrap(); // s_endpgm
+            let counts = emit::census::take(&host::stub_ps().dxil).unwrap().counts;
+            let pixel = host::stub_ps();
+            let vertex = host::stub_vs(&pixel).unwrap();
+            // The later geometry candidate has different instruction counts.
+            emit::rect_list_gs(&vertex.dxil, None).unwrap();
+            census_line("pixel", false, &program, &pixel);
+
+            let mut expected = String::from(
+                "previous\npixel\twave64=0\tc_total=1\tc_valu=0\tc_sop=0\tc_smem=0\
+                 \tc_buffer=0\tc_image=0\tc_ds=0\tc_sopp=1\tc_other=0",
+            );
+            for (name, n) in emit::census::KINDS.iter().zip(counts) {
+                expected.push_str(&format!("\t{name}={n}"));
+            }
+            assert_eq!(fs::read_to_string(path).unwrap(), expected + "\n");
+        });
+    }
+
     /// Shader dumps are game-derived, so a dump directory in the repo is refused.
     #[test]
     fn emit_dump_inside_repo_is_refused() {
