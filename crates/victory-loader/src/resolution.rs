@@ -99,6 +99,16 @@ pub fn asked_upscaler() -> Option<u32> {
     kind
 }
 
+/// Whether the title can run with the output `size`. On Series S it picks
+/// FidelityFX, whose shipped tables are for an upscale to 1920x1080 only:
+/// with another size it says "maxUpscaleSize must be 1920x1080", its jitter
+/// phase count stays 0 and the title divides by it (+0x28f03e8) on entering
+/// the world (a run at 1280x720 on an Intel Arc B390, 2026-11-26). Its own
+/// upscaler (`VICTORY_UPSCALER=6`) has no such tables.
+pub fn output_fits(series_s: bool, size: (u32, u32), upscaler: Option<u32>) -> bool {
+    !series_s || size == (1920, 1080) || upscaler == Some(6)
+}
+
 /// A place to change: its offset in the image and the bytes there
 /// (compared first; the replacement is at most as long).
 pub struct Site {
@@ -296,9 +306,20 @@ pub unsafe fn write(base: usize, size: usize, site: &Site, code: &[u8]) -> Patch
 /// The image of `size` bytes at `base` stays mapped and no thread runs its
 /// code yet.
 #[cfg(windows)]
-pub unsafe fn apply_asked(base: usize, size: usize) {
+pub unsafe fn apply_asked(base: usize, size: usize, series_s: bool) {
     let mut asked: Vec<(&Site, Vec<u8>, String)> = Vec::new();
-    if let Some((w, h)) = asked_output() {
+    let upscaler = asked_upscaler();
+    let output = asked_output().filter(|&(w, h)| {
+        let fits = output_fits(series_s, (w, h), upscaler);
+        if !fits {
+            tracing::warn!(width = w, height = h, "resolution: VICTORY_OUTPUT left out, the Series S profile's FidelityFX upscales to 1920x1080 only");
+            println!(
+                "resolution: VICTORY_OUTPUT={w}x{h} left out: the Series S profile's upscaler (FidelityFX) only has tables for 1920x1080 and the title crashes with another size. For another size use --console series-x, or VICTORY_UPSCALER=6 (the title's own upscaler; not tested on Series S)."
+            );
+        }
+        fits
+    });
+    if let Some((w, h)) = output {
         asked.push((&OUTPUT, output_code(w, h), format!("{w}x{h}")));
         if (w, h) != (3840, 2160) {
             asked.push((&POOL_CHECK, pool_check_code(), format!("{w}x{h}")));
@@ -310,7 +331,7 @@ pub unsafe fn apply_asked(base: usize, size: usize) {
     if let Some(s) = asked_ffx_scale() {
         asked.push((&FFX_SCALE, ffx_scale_code(s), format!("{s}")));
     }
-    if let Some(kind) = asked_upscaler() {
+    if let Some(kind) = upscaler {
         asked.push((&PICKER, picker_code(kind), format!("returns {kind}")));
     }
     for (site, code, value) in asked {
@@ -341,6 +362,15 @@ mod tests {
         assert_eq!(parse_render_scale("1"), Some(1.0));
         assert_eq!(parse_render_scale("0.4"), None);
         assert_eq!(parse_render_scale("1.5"), None);
+    }
+
+    #[test]
+    fn series_s_keeps_its_output_size() {
+        assert!(output_fits(true, (1920, 1080), None));
+        assert!(!output_fits(true, (1280, 720), None));
+        assert!(!output_fits(true, (1280, 720), Some(7)));
+        assert!(output_fits(true, (1280, 720), Some(6)));
+        assert!(output_fits(false, (1280, 720), None));
     }
 
     /// The calls and loads in the bytes compared are the ones the

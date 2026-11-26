@@ -5,7 +5,8 @@
 # -Build        target\diag (the default, the build all measurements are of) or target\release
 # -Console      auto (the default: Series S on a PC with 32 GB of RAM or less, else Series X), series-x or series-s
 # -Output       the title's output size: 1280x720, 1664x936, 1920x1080, 2560x1440 or 3840x2160.
-#               It renders at two thirds of it, so 1280x720 is the least work for the card.
+#               Series X profile only: the Series S profile runs at 1920x1080 (rendering 1280x720) and
+#               crashes with another size, so the program leaves it out there.
 # -Ports        the renderer patches 1, 2, 5, 6 and 7 of the README, all on (off by default while they are
 #               tested; together 57-75 ms became about 45 ms a frame on the PC they were measured on)
 # -More         other settings: -More @{VICTORY_PANEL='1'}

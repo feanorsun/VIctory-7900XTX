@@ -216,7 +216,8 @@ pub fn run(
     if execute {
         let size = image.info().size_of_image as usize;
         // SAFETY: the image stays mapped and nothing of it has run yet.
-        unsafe { victory_loader::resolution::apply_asked(image.base(), size) };
+        let series_s = matches!(chosen, victory_hle::console::Console::SeriesS);
+        unsafe { victory_loader::resolution::apply_asked(image.base(), size, series_s) };
     }
     if !execute {
         println!("not executing (pass --execute to start the title)");
