@@ -11,7 +11,6 @@ and the steps in order. Nothing past stage 1 is implemented.
 | Change | Where | Off switch |
 |---|---|---|
 | In-place stage 1 by default (title memory windows placed for the GPU, not copied) | `inplace.rs` `default_level` | `VICTORY_INPLACE=0` |
-| Texture copies may fill 70 % of the card budget, not 90 % | `resource.rs` `default_percent` | `VICTORY_TEXTURE_ROOM_PERCENT=90` |
 | In-place cap at 4 GiB or RAM/8 | `inplace.rs` `default_most` | `VICTORY_INPLACE_MB` |
 | Empty texture blocks kept: RAM/32 (1 GB at 32 GB; was 4 GB) | `pool.rs` `kept_blocks` | none (code) |
 | Scratch chunks kept: RAM/128 (256 MB; was 1 GB) | `host.rs` `kept_scratch` | none (code) |

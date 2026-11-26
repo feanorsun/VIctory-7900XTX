@@ -41,13 +41,12 @@ been measured on Intel yet.
     confirmed the approach with a probe only; it has not been run as a whole
     game on any machine. **This is the change most likely to show up as a
     visual or crash problem.** Revert with `VICTORY_INPLACE=0`.
-  - `VICTORY_TEXTURE_ROOM_PERCENT` defaults to 70 instead of 90. Texture copies
-    may fill 70 % of the card's budget, which here is the PC's memory, so about
-    a fifth of 32 GB is left for the title and the system. Costs more uploads
-    when textures are swapped. Set it to 90 to revert.
+  - `VICTORY_TEXTURE_ROOM_PERCENT` was 70 instead of 90 here for a day and is
+    90 again: on the Arc B390 the card's budget is a reserved 8 GB, not the
+    PC's free memory, and at 70 % textures waited with a third of it in use
+    (see the run below).
   - Caches that keep memory empty for reuse are sized from installed RAM (32 GB
     as the example). Each keeps the smaller of its old limit and its share:
-    - empty texture blocks: 1/32 of RAM, 1 GB (was 4 GB);
     - scratch chunks for command lists: 1/128 of RAM, 256 MB (was 1 GB);
     - idle command lists: one per 128 MB of RAM, 256 (was 512).
 
@@ -145,19 +144,49 @@ of RAM or less:
 - The memory budgets of a smaller PC are on (`residency.rs`;
   `VICTORY_RESIDENCY=0` turns them off).
 
-And on request: `play.cmd -Output 1280x720` (or `scripts\play.ps1 -Output
-1280x720`) has the title render at 853x480 and show 1280x720. That is about a
-ninth of the Series X profile's pixels.
+**Do not ask for a smaller output on the Series S profile.** `-Output
+1280x720` was recommended here and crashed the title on entering the world (see
+the run below). The Series S profile's upscaler (FidelityFX) only has tables
+for 1920x1080, where the title renders at 1280x720. Another size is now left
+out with a line saying so. With `--console series-x` the sizes work as before,
+at the cost of that profile's memory.
 
 `-Ports` turns on the five renderer patches of the README together (57-75 ms to
 about 45 ms a frame where they were measured, an AMD card). They are off by
-default while they are tested, and none has run on an Intel card. Try the
-smaller picture first, then add `-Ports`, so a fault can be told apart.
+default while they are tested, and none has run on an Intel card. Run
+without them first, then add `-Ports`, so a fault can be told apart.
 
 The README's own figures say the Series S profile still held about 30 GB of
 private memory and 10.5 GB of card memory on a 64 GB PC with a card of its
 own. On 32 GB shared that is still more than there is. Expect paging until the
 figures of a run of this repository say otherwise.
+
+## The first run of this repository on the Arc B390 (2026-11-26)
+
+A `diag` build from before the core change above, Series S profile chosen by
+memory, started with `-Output 1280x720`:
+
+- Menus and loading held 30.0 frames a second (the title's own cap) with the
+  card 2 to 5 % busy.
+- **It crashed on entering the world**: divide by zero at title+0x28f03e8,
+  after the title said `FSR4 configuration mismatch: maxUpscaleSize must be
+  1920x1080; received 1280x720`. The cause was the output size asked for;
+  `resolution.rs` (`output_fits`) now leaves such a size out.
+- `textures picked by index: the card has no room for more; they wait` with
+  2,636 MB of the card's 7,424 MB budget in use. The 70 % texture share and the
+  smaller count of empty texture blocks kept, both set for integrated cards a
+  day earlier, are taken back. Whether the wait is gone is not measured; the
+  3,072 MB kept for render targets (`targets_room_kept`) is the next suspect.
+- The PC shows 23.4 GiB of RAM, because 8 GB is reserved for the card. It had
+  about 1 GB free and the title's process held 8.2 GB at the crash.
+- `host pipeline refused (0x80070057)` for the compute program
+  `02384a60fda6f2d0`: it translates here, but the driver refuses the pipeline
+  and its dispatches are dropped. Open. A run with `VICTORY_WAVE_WHY=1` says
+  more.
+- `new card memory waited for ... the longest 858 ms`: a hitch each time a new
+  block of card memory is mapped.
+
+No frame time in the world is known yet.
 
 ## How to measure on the device
 

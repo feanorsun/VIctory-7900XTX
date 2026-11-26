@@ -3,7 +3,7 @@ setlocal
 rem Starts the title with this fork's settings (scripts\play.ps1).
 rem   set VICTORY_GAME_DIR=C:\path\to\your\own\dump
 rem   play.cmd                     the console is chosen by this PC's memory
-rem   play.cmd -Output 1280x720    a smaller picture: the least work for the card
+rem   play.cmd -Console series-x -Output 1280x720    a smaller picture (Series X profile only; needs more memory)
 rem Other options are those of scripts\play.ps1 (-Console, -Safe, -Build, -More).
 rem Build first: cargo build --locked --profile diag -p victory --features diagnostics
 if "%VICTORY_GAME_DIR%"=="" (
