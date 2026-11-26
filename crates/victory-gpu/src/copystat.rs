@@ -594,6 +594,56 @@ fn system_memory() -> (u64, u64) {
     (m.ullAvailPhys, m.ullAvailPageFile)
 }
 
+/// The processes holding the most physical memory, as "name MB" from the
+/// largest down (ours among them); those Windows does not let us ask are
+/// left out. For the line that says who has the PC's memory when it runs
+/// out: the third run on the Arc B390 PC ended with 98 MB free while 6,341
+/// MB of ours were in memory, of 23.4 GiB.
+fn largest_processes(most: usize) -> Vec<(String, u64)> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::ProcessStatus::{
+        K32EnumProcesses, K32GetProcessImageFileNameW, K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    let mut ids = vec![0u32; 4096];
+    let mut bytes = 0u32;
+    // SAFETY: the buffer and its size in bytes.
+    if unsafe { K32EnumProcesses(ids.as_mut_ptr(), (ids.len() * 4) as u32, &mut bytes) } == 0 {
+        return Vec::new();
+    }
+    ids.truncate(bytes as usize / 4);
+    let mut found = Vec::new();
+    for id in ids {
+        // SAFETY: a plain call; a process that is gone or not ours to ask gives no handle.
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, id) };
+        if process.is_null() {
+            continue;
+        }
+        let mut c = PROCESS_MEMORY_COUNTERS {
+            cb: size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+            ..Default::default()
+        };
+        let mut path = [0u16; 520];
+        // SAFETY: an open handle, a sized structure, and a buffer with its length.
+        let (ok, len) = unsafe {
+            (
+                K32GetProcessMemoryInfo(process, &mut c, c.cb) != 0,
+                K32GetProcessImageFileNameW(process, path.as_mut_ptr(), path.len() as u32) as usize,
+            )
+        };
+        // SAFETY: the handle opened above.
+        unsafe { CloseHandle(process) };
+        if ok {
+            let path = String::from_utf16_lossy(&path[..len.min(path.len())]);
+            let name = path.rsplit('\\').next().unwrap_or_default();
+            found.push((if name.is_empty() { format!("process {id}") } else { name.to_owned() }, c.WorkingSetSize as u64));
+        }
+    }
+    found.sort_by(|a, b| b.1.cmp(&a.1));
+    found.truncate(most);
+    found
+}
+
 /// Every how many memory lines (one each 5 s) the address space is walked
 /// for the memory map line ([`log_memory_map`]): `VICTORY_MEMORY_MAP=<n>`,
 /// 60 if unset (about every 5 minutes; 6 before), `0` leaves the walk out.
@@ -906,6 +956,18 @@ fn log_memory() {
         mb(stagings[1]),
         mb(windows[2]),
     );
+    // Below a gigabyte free everything is paged in and out and frames take
+    // seconds: say who has the memory (a browser, a second copy of the
+    // title, a build still running) while the user can still close it.
+    if free < 1 << 30 {
+        let held: Vec<String> =
+            largest_processes(8).iter().map(|(name, bytes)| format!("{name} {:.0} MB", mb(*bytes))).collect();
+        tracing::warn!(
+            "memory: the PC has {:.0} MB of physical memory free; the most is held by: {}",
+            mb(free),
+            held.join(", ")
+        );
+    }
     tracing::info!(
         "memory: {:.0} MB private ({:.0} MB of it in memory; the PC has {:.0} MB free and {:.0} MB \
          left to commit); host copies of title memory: {} alive {:.0} MB, of them {} windows \

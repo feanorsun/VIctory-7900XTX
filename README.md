@@ -98,7 +98,8 @@ high-performance adapter with Shader Model 6.6. The runtime logs its adapter
 name, PCI vendor and device IDs, and dedicated VRAM. Set
 `VICTORY_D3D12_ADAPTER` to a zero-based DXGI index or part of the adapter's
 name to select it explicitly. With the launcher, pass
-`-More @{VICTORY_D3D12_ADAPTER='NVIDIA'}`.
+`-Set VICTORY_D3D12_ADAPTER=NVIDIA` (several settings with commas between:
+`-Set NAME=VALUE,NAME=VALUE`).
 
 Before the first run, ahead of time (both can be stopped and go on later):
 
@@ -106,6 +107,11 @@ Before the first run, ahead of time (both can be stopped and go on later):
 target\diag\victory.exe shaders <the shader archives>   # every shader translated, minutes
 target\diag\victory.exe warm --used                     # pipelines earlier runs drew with, for a new driver or build
 ```
+
+`warm` makes the pipelines earlier runs wrote down, and a run writes them
+down with `VICTORY_PIPELINE_BOOK=1` only, which `play.cmd` and
+`scripts\play.ps1` set: before the first run through them it has nothing to
+make and says so.
 
 Intel Arc (integrated) and Intel mobile processors: what is and is not tuned
 for them yet, and how to measure it, is in [docs/intel-arc.md](docs/intel-arc.md).

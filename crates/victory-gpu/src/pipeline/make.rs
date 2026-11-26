@@ -43,6 +43,8 @@ pub(crate) struct Pending {
     used: AtomicBool,
     /// A pass over the screen ([`GraphicsState::screen_pass`]).
     screen: bool,
+    /// When a draw or dispatch first waited for it ([`wait_once`]).
+    asked: OnceLock<Instant>,
 }
 
 // SAFETY: D3D12 objects are free-threaded; the graphics state (whose input
@@ -68,6 +70,7 @@ impl Pending {
             made: OnceLock::new(),
             key: key.finalize().to_hex()[..32].to_owned(),
             used: AtomicBool::new(false),
+            asked: OnceLock::new(),
         }
     }
 
@@ -201,11 +204,38 @@ fn shared_budget() -> bool {
     *ON.get_or_init(|| std::env::var_os("VICTORY_PIPELINE_WAIT_SHARED").is_none_or(|v| v != "0"))
 }
 
+/// A pipeline is waited for during one budget from its first use on, not in
+/// every frame until it is made. The budget is for the many that take a few
+/// milliseconds; one the driver compiles for 8 to 17 seconds (the upscaler's
+/// compute passes on an Intel Arc B390, second run of `docs/intel-arc.md`)
+/// took the whole budget of every frame of those seconds, "500.8 ms waiting
+/// for pipelines" a frame at 3 frames a second, and was not made by it.
+/// On by default; `VICTORY_PIPELINE_WAIT_ONCE=0` waits in every frame.
+fn wait_once() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_PIPELINE_WAIT_ONCE").is_none_or(|v| v != "0"))
+}
+
+/// What is left of `budget` for a pipeline first waited for `age` ago.
+fn left_of_once(budget: Duration, age: Duration) -> Duration {
+    budget.saturating_sub(age)
+}
+
 /// Waits for `p` while frame `frame` has budget left.
 fn wait(p: &Pending, frame: u64) {
     let screen = p.screen && screens_first();
     let budget = if screen { screen_budget() } else { wait_budget() };
     if budget.is_zero() {
+        return;
+    }
+    // (Passes over the screen keep their own, longer wait: without one the
+    // picture is black.)
+    let own = if screen || !wait_once() {
+        budget
+    } else {
+        left_of_once(budget, p.asked.get_or_init(Instant::now).elapsed())
+    };
+    if own.is_zero() {
         return;
     }
     // The frame the budget belongs to, and what was waited of it (or is
@@ -218,7 +248,7 @@ fn wait(p: &Pending, frame: u64) {
         if spent.0 != frame {
             *spent = (frame, Duration::ZERO);
         }
-        let left = budget.saturating_sub(spent.1);
+        let left = budget.saturating_sub(spent.1).min(own);
         if shared {
             spent.1 += left;
         }

@@ -69,12 +69,15 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
         all.len()
     );
     if keys.is_empty() {
-        // The title records its pipelines as it runs. Before its first run
+        // The title records its pipelines as it runs with the book on
+        // (`VICTORY_PIPELINE_BOOK=1`): two runs through play.cmd, which did
+        // not set it then, left "0 pipelines known". Before its first run
         // there are none, and the folder they are kept in is not there yet
         // (opening a list in it was "os error 3", with no path named).
         println!(
-            "No pipelines are known yet in {}: the title records them as it runs. \
-             Run it once (play.cmd or scripts\\play.ps1), then warm again.",
+            "No pipelines are known yet in {}: the title records them as it runs \
+             with VICTORY_PIPELINE_BOOK=1, which play.cmd and scripts\\play.ps1 set. \
+             Run it once that way (a run without it leaves nothing here), then warm again.",
             dir.display()
         );
         return Ok(());
