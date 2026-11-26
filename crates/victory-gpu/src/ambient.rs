@@ -247,13 +247,23 @@ void keep(uint3 at : SV_DispatchThreadID) {
     }
     cells[at.y * CX + at.x] = float4(sum / 25.0, 1.0);
 }
+// The sum of the cells in one group of 256 threads: each adds every 256th
+// cell, then the partial sums are added in a tree (CELLS is a multiple of 256).
+groupshared float3 partial[256];
 [RootSignature(RS)]
-[numthreads(1, 1, 1)]
-void mean() {
+[numthreads(256, 1, 1)]
+void mean(uint t : SV_GroupIndex) {
     float3 sum = 0;
-    for (uint i = 0; i < CELLS; i++) sum += cells[i].rgb;
+    for (uint i = t; i < CELLS; i += 256) sum += cells[i].rgb;
+    partial[t] = sum;
+    GroupMemoryBarrierWithGroupSync();
+    for (uint s = 128; s > 0; s >>= 1) {
+        if (t < s) partial[t] += partial[t + s];
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (t != 0) return;
     float4 was = cells[CELLS];
-    float3 now = sum / CELLS;
+    float3 now = partial[0] / CELLS;
     // (`jump` > 0: a change of more than that factor either way is
     // followed at once, as a new room is.)
     float a = max(dot(now, LUMA), 1e-5), b = max(dot(was.rgb, LUMA), 1e-5);
@@ -290,7 +300,7 @@ void gather(uint3 at : SV_DispatchThreadID) {
         float3 d = c.xyz - p;
         float dd = dot(d, d);
         float w = c.w / (dd + r2);
-        float3 dir = d / sqrt(dd + 0.25 * r2);
+        float3 dir = d * rsqrt(dd + 0.25 * r2);
         whole += w;
         toward += w * dir;
         light += w * L;
@@ -631,6 +641,23 @@ mod tests {
         assert_eq!(role(b"..CS_CacheScreenSpaceRadiance_eed2fc35.."), Some(Role::Radiance));
         assert_eq!(role(b"CS_AccumulateLocalLightInscatteringVolume_7e2f5eef"), Some(Role::Air));
         assert_eq!(role(b"CS_TemporalResolve"), None);
+    }
+
+    /// Every pass's source compiles with the system's compiler. Needs no
+    /// device, so it checks the shader on any machine that runs the tests.
+    #[test]
+    fn the_passes_compile() {
+        for (part, entry) in [
+            ("KEEP", s!("keep")),
+            ("KEEP", s!("mean")),
+            ("PLACE", s!("place")),
+            ("GATHER", s!("gather")),
+            ("AIR", s!("clear_air")),
+            ("RAISE", s!("raise")),
+        ] {
+            crate::host::compile(&format!("#define {part}\n{SOURCE}"), entry, s!("cs_5_1"))
+                .unwrap_or_else(|e| panic!("{part}: {e}"));
+        }
     }
 
     /// The passes compile with the system's compiler and the host takes them.
