@@ -53,21 +53,39 @@ pub(crate) struct Job {
     asked: std::time::Instant,
     /// Callbacks pending until the worker finishes; then `copy.ahead`
     /// stays DONE on success or LISTED on failure for this host copy.
-    then: Mutex<Option<Vec<Box<dyn FnOnce() + Send>>>>,
+    then: Callbacks,
 }
 
 impl Job {
     /// Calls `f` when the copy has run: now if it has.
     pub(crate) fn then(&self, f: impl FnOnce() + Send + 'static) {
-        let mut then = self.then.lock().unwrap_or_else(|e| e.into_inner());
+        self.then.register(&self.copy.ahead, f);
+    }
+}
+
+type Callback = Box<dyn FnOnce() + Send>;
+struct Callbacks(Mutex<Option<Vec<Callback>>>);
+
+impl Callbacks {
+    fn pending() -> Self {
+        Self(Mutex::new(Some(Vec::new())))
+    }
+
+    fn register(&self, ahead: &AtomicU8, f: impl FnOnce() + Send + 'static) {
+        let mut then = self.0.lock().unwrap_or_else(|e| e.into_inner());
         match then.as_mut() {
             Some(callbacks) => callbacks.push(Box::new(f)),
-            None if self.copy.ahead.load(Relaxed) == DONE => {
+            None if ahead.load(Relaxed) == DONE => {
                 drop(then);
                 f();
             }
             None => {}
         }
+    }
+
+    fn finish(&self, copied: bool) -> Vec<Callback> {
+        let callbacks = self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+        callbacks.filter(|_| copied).unwrap_or_default()
     }
 }
 
@@ -136,7 +154,7 @@ fn claim(resource: This, first: u32, there: u64) -> Option<Taken> {
     if super::no_wait() && super::fill_unlocked() {
         staging.expected.store(if there == u64::MAX { super::mapped_bytes(staging.memory, staging.read) } else { there }, Relaxed);
     }
-    let job = Arc::new(Job { staging, copy, asked: std::time::Instant::now(), then: Mutex::new(Some(Vec::new())) });
+    let job = Arc::new(Job { staging, copy, asked: std::time::Instant::now(), then: Callbacks::pending() });
     BYTES.fetch_add(job.staging.read as u64, Relaxed);
     ON_THEIR_WAY.lock().unwrap_or_else(|e| e.into_inner()).push((job.copy.serial, job.clone()));
     Some(Taken::New(job))
@@ -232,21 +250,22 @@ impl Worker {
                     jobs.push(job);
                 }
             }
-            let failed: Vec<_> = jobs.extract_if(.., |job| {
-                job.staging.refresh();
-                job.staging.last.lock().unwrap_or_else(|e| e.into_inner()).incomplete
-            }).collect();
-            if !failed.is_empty() {
-                finish(failed, false);
-            }
-            if !jobs.is_empty() {
-                value += 1;
-                let result = self.copy(&jobs, value);
-                if let Err(e) = &result {
-                    tracing::warn!(error = %e, "uploads ahead did not run");
-                }
-                finish(jobs, result.is_ok());
-            }
+            process_batch(
+                jobs,
+                |job| {
+                    job.staging.refresh();
+                    job.staging.last.lock().unwrap_or_else(|e| e.into_inner()).ready_for_upload
+                },
+                |ready| {
+                    value += 1;
+                    let result = self.copy(ready, value);
+                    if let Err(e) = &result {
+                        tracing::warn!(error = %e, "uploads ahead did not run");
+                    }
+                    result.is_ok()
+                },
+                finish,
+            );
         }
     }
 
@@ -266,6 +285,24 @@ impl Worker {
             self.fence.SetEventOnCompletion(value, windows::Win32::Foundation::HANDLE::default())?;
         }
         Ok(())
+    }
+}
+
+/// Release jobs without a staging image immediately. A single copy and fence
+/// decide the outcome for the remaining jobs.
+fn process_batch<J>(
+    mut jobs: Vec<J>,
+    mut ready: impl FnMut(&J) -> bool,
+    copy: impl FnOnce(&[J]) -> bool,
+    mut finish: impl FnMut(Vec<J>, bool),
+) {
+    let skipped: Vec<_> = jobs.extract_if(.., |job| !ready(job)).collect();
+    if !skipped.is_empty() {
+        finish(skipped, false);
+    }
+    if !jobs.is_empty() {
+        let copied = copy(&jobs);
+        finish(jobs, copied);
     }
 }
 
@@ -313,7 +350,7 @@ fn finish(jobs: Vec<Arc<Job>>, copied: bool) {
         LANDED.notify_all();
     }
     for job in &jobs {
-        let callbacks = job.then.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let callbacks = job.then.finish(copied);
         if !copied {
             continue;
         }
@@ -332,7 +369,7 @@ fn finish(jobs: Vec<Arc<Job>>, copied: bool) {
                 STATS[5].load(Relaxed)
             );
         }
-        for f in callbacks.into_iter().flatten() {
+        for f in callbacks {
             f();
         }
     }
@@ -355,6 +392,87 @@ pub(crate) fn fresh() -> AtomicU8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_converted_staging_can_finish_an_ahead_upload() {
+        use crate::texture::{Last, digest};
+
+        // A partial read fills the absent source pages with zeros.
+        let mut fresh = Last::default();
+        assert!(!fresh.convert_partial(&[0; 4], || panic!("no source pages to detile")));
+        fresh.asked = 1;
+        assert!(!fresh.unwritten(&[]), "a write-watch checkpoint alone cannot skip staging");
+        let hash = Some(digest(&[0x54; 4]));
+        let mut failed = Last::default();
+        assert!(!failed.convert(hash, || false));
+        let mut cached = Last::default();
+        assert!(cached.convert(hash, || true));
+        assert!(!cached.convert(hash, || panic!("unchanged input was detiled again")));
+        let mut watched = Last::default();
+        assert!(watched.convert(None, || true));
+
+        let mut states = [fresh, failed, cached, watched];
+        let mut finished = Vec::new();
+        process_batch(
+            vec![0usize, 1, 2, 3],
+            |&i| states[i].ready_for_upload,
+            |jobs| {
+                assert_eq!(jobs, &[2, 3], "only completed staging images reach the copy");
+                true
+            },
+            |jobs, copied| finished.push((jobs, copied)),
+        );
+        assert_eq!(finished, [(vec![0, 1], false), (vec![2, 3], true)]);
+
+        // Both declined jobs can still use the normal list once the bytes
+        // are available, including a retry of the exact digest that failed.
+        for last in &mut states[..2] {
+            let uploaded = std::sync::atomic::AtomicBool::new(false);
+            let dirty = std::sync::atomic::AtomicBool::new(true);
+            assert_eq!(last.claim(&uploaded, &dirty), None);
+            assert!(last.convert(hash, || true));
+            assert_eq!(last.claim(&uploaded, &dirty), Some(true));
+            assert_eq!(last.claim(&uploaded, &dirty), None);
+        }
+    }
+
+    #[test]
+    fn callbacks_require_a_completed_copy() {
+        for (ready, copy_succeeds) in [(false, false), (true, false), (true, true)] {
+            let callbacks = Callbacks::pending();
+            let ahead = AtomicU8::new(PENDING);
+            let (sent, received) = std::sync::mpsc::channel();
+            let register = |n| {
+                let sent = sent.clone();
+                callbacks.register(&ahead, move || sent.send(n).unwrap());
+            };
+            register(1);
+            let mut attempts = 0;
+            let mut releases = 0;
+            process_batch(
+                vec![()],
+                |_| ready,
+                |_| {
+                    attempts += 1;
+                    register(2);
+                    assert!(received.try_recv().is_err());
+                    copy_succeeds
+                },
+                |jobs, copied| {
+                    releases += jobs.len();
+                    ahead.store(if copied { DONE } else { LISTED }, Relaxed);
+                    for callback in callbacks.finish(copied) {
+                        callback();
+                    }
+                },
+            );
+            register(3);
+            assert_eq!(attempts, usize::from(ready));
+            assert_eq!(releases, 1);
+            let expected = if copy_succeeds { vec![1, 2, 3] } else { vec![] };
+            assert_eq!(received.try_iter().collect::<Vec<_>>(), expected);
+        }
+    }
 
     /// The texels of a placed texture arrive by the copy queue, all levels of
     /// them, and what waits for them is called then; a second asking finds the

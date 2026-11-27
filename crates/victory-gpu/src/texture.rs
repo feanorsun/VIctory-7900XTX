@@ -100,8 +100,9 @@ pub(crate) struct Staging {
 struct Last {
     hash: Option<Digest>,
     asked: u64,
-    /// The last attempted conversion failed. A new upload must wait for a retry.
-    incomplete: bool,
+    /// A conversion finished and its staging bytes can be copied. A refresh
+    /// can skip conversion entirely when none of the source pages is committed.
+    ready_for_upload: bool,
     /// The frame a partly mapped texture was last read in.
     partial: Option<u64>,
     /// Until this frame a guarded texture is hashed at every check: its
@@ -111,14 +112,24 @@ struct Last {
 }
 
 impl Last {
+    fn unwritten(&self, written: &[(usize, u64)]) -> bool {
+        self.ready_for_upload && self.asked != 0 && written.iter().all(|&(_, w)| w <= self.asked)
+    }
+
+    /// Missing pages read as zeros. Leave staging as it was if the partial
+    /// read supplied nothing to convert.
+    fn convert_partial(&mut self, read: &[u8], convert: impl FnOnce() -> bool) -> bool {
+        read.iter().any(|&b| b != 0) && self.convert(Some(digest(read)), convert)
+    }
+
     /// True when this call produced a new complete staging image.
     /// Write-watched memory has no digest and always converts when due.
     fn convert(&mut self, hash: Option<Digest>, convert: impl FnOnce() -> bool) -> bool {
         if hash.is_some() && self.hash == hash {
             return false;
         }
-        self.incomplete = !convert();
-        if self.incomplete {
+        self.ready_for_upload = convert();
+        if !self.ready_for_upload {
             self.hash = None;
             self.asked = 0;
             return false;
@@ -134,7 +145,7 @@ impl Last {
         dirty: &std::sync::atomic::AtomicBool,
     ) -> Option<bool> {
         use std::sync::atomic::Ordering::AcqRel;
-        if self.incomplete {
+        if !self.ready_for_upload {
             return None;
         }
         let was_uploaded = uploaded.swap(true, AcqRel);
@@ -1217,7 +1228,7 @@ impl Staging {
     /// refresh detiles anew, whether the memory changed or not.
     fn forget(&self) {
         let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
-        *last = Last { incomplete: last.incomplete, ..Last::default() };
+        *last = Last { ready_for_upload: last.ready_for_upload, ..Last::default() };
     }
 
     /// The title memory the texture is read from: address and bytes.
@@ -1268,7 +1279,7 @@ impl Staging {
             return 0;
         }
         if !alone && let Some((now, written)) = waited(1, || crate::watch::writes(start, start + size, false)) {
-            if last.asked != 0 && written.iter().all(|&(_, w)| w <= last.asked) {
+            if last.unwritten(&written) {
                 return 0;
             }
             // Read through the copy, which stands unmapped pages: memory of
@@ -1301,10 +1312,8 @@ impl Staging {
             && let Some((now, written)) = waited(1, || crate::watch::writes(start, start + size, true))
         {
             const HASH_EVERY: u64 = 8;
-            let unwritten = last.asked != 0 && written.iter().all(|&(_, w)| w <= last.asked);
-            if !last.incomplete {
-                last.asked = now;
-            }
+            let unwritten = last.unwritten(&written);
+            last.asked = now;
             let frame = crate::frame::current();
             let turn = frame
                 .wrapping_add((start >> 16) as u64)
@@ -1362,10 +1371,7 @@ impl Staging {
             crate::copystat::add(crate::copystat::C::TexHashed, size as u64);
             let changed = with_read(size, |read| {
                 crate::host::copy_mapped(read.as_mut_ptr(), self.memory, size, false);
-                if read.iter().all(|&b| b == 0) {
-                    return false;
-                }
-                last.convert(Some(digest(read)), || self.detile(read))
+                last.convert_partial(read, || self.detile(read))
             });
             #[cfg(feature = "diagnostics")]
             if changed {
@@ -2137,7 +2143,7 @@ mod detile_retry {
         assert_eq!(output, [0x42, 0x42, 0x42, 0x42, 0, 0]);
         assert!(refresh(&mut last, &layout, &input, &mut output, &mut calls));
         assert_eq!(output, [0x42; 6]);
-        assert!(!last.incomplete);
+        assert!(last.ready_for_upload);
         assert_eq!(last.hash, Some(digest(&input)));
         assert!(!refresh(&mut last, &layout, &input, &mut output, &mut calls));
         assert_eq!(calls, 2);
@@ -2156,7 +2162,7 @@ mod detile_retry {
         last.asked = 7;
         assert!(!refresh(&mut last, &layout, &b, &mut output[..5], &mut calls));
         assert_eq!(output, [0xb2, 0xb2, 0xb2, 0xb2, 0xa1, 0xa1]);
-        assert!(last.incomplete);
+        assert!(!last.ready_for_upload);
         assert_eq!(last.hash, None);
         assert_eq!(last.asked, 0);
 
@@ -2215,11 +2221,15 @@ mod prelude_upload_tests {
 
     #[test]
     fn first_upload_clean_skip_and_immediate_same_frame_reupload() {
-        let last = Last::default();
+        let mut last = Last::default();
         let uploaded = AtomicBool::new(false);
         let dirty = AtomicBool::new(true);
 
+        // A refresh with no committed pages did not fill the new buffer.
+        assert_eq!(last.claim(&uploaded, &dirty), None);
+
         // Frame 1: first upload runs after refresh() detiled into staging.
+        assert!(last.convert(None, || true));
         assert_eq!(last.claim(&uploaded, &dirty), Some(true));
         // Second list in the same submission skips redundant copy.
         assert_eq!(last.claim(&uploaded, &dirty), None);
@@ -2240,7 +2250,8 @@ mod prelude_upload_tests {
 
     #[test]
     fn three_buffer_ring_never_displays_stale_frame() {
-        let last = Last::default();
+        let mut last = Last::default();
+        assert!(last.convert(None, || true));
         let ring: [(AtomicBool, AtomicBool); 3] =
             std::array::from_fn(|_| (AtomicBool::new(false), AtomicBool::new(true)));
         let mut gpu_frame = [0u32; 3];
