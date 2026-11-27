@@ -11,6 +11,8 @@ use std::ptr::NonNull;
 
 use victory_formats::texture;
 
+#[cfg(windows)]
+use crate::host::AllocationKind;
 use crate::object::{
     self, E_INVALIDARG, E_OUTOFMEMORY, HEAP, HRESULT, Iid, Object, RESOURCE, S_OK, Table, This,
     guid,
@@ -515,7 +517,7 @@ fn twin_texture(
         TWINS[1].fetch_add(1, Relaxed);
         return None;
     };
-    let _ = crate::host::resident(&host.device, &texture);
+    let _ = crate::host::resident(&host.device, &texture, AllocationKind::Texture);
     crate::host::name(&texture, || {
         format!("depth twin {}x{} f{}", d.width, d.height, d.format)
     });
@@ -576,7 +578,7 @@ fn twin_texture(
             tracing::warn!(error = %e, desc = ?d, "no twin for a depth plane");
         }
         texture.map(|texture| {
-            let _ = crate::host::resident(&host.device, &texture);
+            let _ = crate::host::resident(&host.device, &texture, AllocationKind::Texture);
             crate::host::name(&texture, || {
                 format!("depth plane twin {}x{} f{}", d.width, d.height, d.format)
             });
@@ -2641,7 +2643,8 @@ fn host_texture_as(
     if !reserved
         && made.is_ok()
         && let Some(t) = &texture
-        && let Err(e) = crate::host::resident(&host.device, t).and_then(|()| crate::host::mapped(&host.device))
+        && let Err(e) = crate::host::resident(&host.device, t, AllocationKind::Texture)
+            .and_then(|()| crate::host::mapped(&host.device, AllocationKind::Texture))
     {
         tracing::warn!(error = %e, desc = ?d, "a host texture is not resident");
         texture = None;

@@ -18,6 +18,10 @@ use windows::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObj
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{Interface, PCWSTR, w};
 
+mod residency_waits;
+pub(crate) use residency_waits::AllocationKind;
+use residency_waits::Wait;
+
 /// Resource states without the console's own bits (compression hints from
 /// bit 25 up), which the host rejects.
 pub(crate) fn pc_state(state: u32) -> u32 {
@@ -260,11 +264,12 @@ unsafe impl Send for Aside {}
 /// for so far are done, and waited for. (`MakeResident` came back before
 /// that: run n11 was lost as n08 was with it alone.) Best done off a hot
 /// path: a tenth of a millisecond to some.
-pub(crate) fn mapped(device: &ID3D12Device) -> windows::core::Result<()> {
+pub(crate) fn mapped(device: &ID3D12Device, kind: AllocationKind) -> windows::core::Result<()> {
     static ASIDE: Mutex<Option<Aside>> = Mutex::new(None);
     if !wait_resident() {
         return Ok(());
     }
+    let span = crate::timeline::span("new memory: mapped");
     let started = std::time::Instant::now();
     let mut aside = ASIDE.lock().unwrap_or_else(|e| e.into_inner());
     // SAFETY: plain object creation; the objects the list names are kept.
@@ -320,51 +325,30 @@ pub(crate) fn mapped(device: &ID3D12Device) -> windows::core::Result<()> {
         }
     }
     let us = started.elapsed().as_micros() as u64;
-    MAPPED[0].fetch_add(1, Ordering::Relaxed);
-    MAPPED[1].fetch_add(us, Ordering::Relaxed);
-    MAPPED[2].fetch_max(us, Ordering::Relaxed);
-    let n = MAPPED[0].load(Ordering::Relaxed);
-    if n == 1 || n.is_multiple_of(200) {
-        tracing::info!(
-            "new card memory waited for until it is mapped (VICTORY_WAIT_RESIDENT=0: not), since the start: {n} times, {:.1} ms, the longest {:.1} ms",
-            MAPPED[1].load(Ordering::Relaxed) as f64 / 1000.0,
-            MAPPED[2].load(Ordering::Relaxed) as f64 / 1000.0
-        );
-    }
+    span.end();
+    residency_waits::record(Wait::Mapped, kind, us);
     Ok(())
 }
 
-/// Times, microseconds and the longest of [`mapped`].
-static MAPPED: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
-
 /// New memory (made with [`not_resident`]) is resident when this returns.
-pub(crate) fn resident(device: &ID3D12Device, object: &impl Interface) -> windows::core::Result<()> {
+pub(crate) fn resident(
+    device: &ID3D12Device,
+    object: &impl Interface,
+    kind: AllocationKind,
+) -> windows::core::Result<()> {
     if !wait_resident() {
         return Ok(());
     }
     let started = std::time::Instant::now();
     let object: ID3D12Pageable = object.cast()?;
+    let span = crate::timeline::span("new memory: resident");
     // SAFETY: a live heap or resource of the device's.
     let made = unsafe { device.MakeResident(&[Some(object)]) };
     let us = started.elapsed().as_micros() as u64;
-    RESIDENT[0].fetch_add(1, Ordering::Relaxed);
-    RESIDENT[1].fetch_add(us, Ordering::Relaxed);
-    RESIDENT[2].fetch_max(us, Ordering::Relaxed);
-    static SAID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = RESIDENT[0].load(Ordering::Relaxed);
-    if n >= 1000 * (SAID.load(Ordering::Relaxed) + 1) {
-        SAID.store(n / 1000, Ordering::Relaxed);
-        tracing::info!(
-            "new memory waited for (VICTORY_WAIT_RESIDENT=0: not), since the start: {n} times, {:.1} ms, the longest {:.1} ms",
-            RESIDENT[1].load(Ordering::Relaxed) as f64 / 1000.0,
-            RESIDENT[2].load(Ordering::Relaxed) as f64 / 1000.0
-        );
-    }
+    span.end();
+    residency_waits::record(Wait::Resident, kind, us);
     made
 }
-
-/// Times, microseconds and the longest of [`resident`].
-static RESIDENT: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
 
 /// Whether memory the card was given stays with it while there is room (on
 /// by default; `VICTORY_KEEP_FREED=0`: it is given back as before). A shader
@@ -9196,7 +9180,7 @@ impl Host {
                 )
                 .and_then(|()| {
                     let b = buffer.as_ref().ok_or_else(windows::core::Error::empty)?;
-                    resident(&self.device, b)?;
+                    resident(&self.device, b, AllocationKind::UploadBuffer)?;
                     b.Map(0, None, Some(&mut data))
                 })
         };
@@ -10180,8 +10164,8 @@ impl Host {
                 )
                 .and_then(|()| {
                     let b = buffer.as_ref().ok_or_else(windows::core::Error::empty)?;
-                    resident(&self.device, b)?;
-                    mapped(&self.device)?;
+                    resident(&self.device, b, AllocationKind::SharedBuffer)?;
+                    mapped(&self.device, AllocationKind::SharedBuffer)?;
                     b.Map(0, None, Some(&mut data))
                 })
         };
@@ -10269,8 +10253,8 @@ impl Host {
                 )
                 .and_then(|()| {
                     let b = buffer.as_ref().ok_or_else(windows::core::Error::empty)?;
-                    resident(&self.device, b)?;
-                    mapped(&self.device)?;
+                    resident(&self.device, b, AllocationKind::MappedCardBuffer)?;
+                    mapped(&self.device, AllocationKind::MappedCardBuffer)?;
                     b.Map(0, None, Some(&mut data))
                 })
         };
@@ -10322,7 +10306,10 @@ impl Host {
         if let Some(b) = &buffer {
             crate::book::made(b, || "an unordered access buffer".into());
         }
-        let made = made.and_then(|()| buffer.as_ref().map_or(Ok(()), |b| resident(&self.device, b))).and_then(|()| mapped(&self.device));
+        let kind = AllocationKind::UavBuffer;
+        let made = made
+            .and_then(|()| buffer.as_ref().map_or(Ok(()), |b| resident(&self.device, b, kind)))
+            .and_then(|()| mapped(&self.device, kind));
         match made {
             Ok(()) => buffer,
             Err(e) => {
