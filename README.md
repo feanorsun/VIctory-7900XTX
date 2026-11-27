@@ -115,7 +115,10 @@ scripts\play.ps1 -Exe <path of your copy's executable>
 ```
 
 `scripts\play.ps1 -Safe` leaves out the newest, faster ways; try it first when
-something is wrong. `-RayTracing` turns the title's ray-traced indirect light on.
+something is wrong. It still applies the launcher's baseline settings, including
+`VICTORY_TEXTURE_NO_WAIT=1`. A direct `victory run` uses the runtime defaults
+when those variables are unset.
+`-RayTracing` turns the title's ray-traced indirect light on.
 
 For PC FSR 4.1.2, set `[paths].fidelityfx_dir` in `victory.toml` or
 `VICTORY_FIDELITYFX_DIR` to the folder containing AMD's signed
